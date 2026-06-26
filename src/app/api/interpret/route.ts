@@ -47,42 +47,69 @@ export async function POST(req: NextRequest) {
     ].filter(Boolean).join(' ').slice(0, 700)
 
     // KB search — full text search, no embedding needed at runtime
-    // Embeddings were pre-built by the Python ingestion script
     let kbContext = ''
+    let kbSources: { title: string; source_type: string; chunk_preview: string }[] = []
     try {
-      // Extract keywords from patient concern + Q&A for text search
       const keywords = [
         patient.primary_concern,
         ...qaPairs.slice(0, 3).map(qa => qa.answer.slice(0, 80)),
       ].filter(Boolean).join(' ')
 
-      // Use Postgres full-text search on kb_chunks content — no vector needed
       const { data: chunks } = await supabaseAdmin
         .from('kb_chunks')
         .select('content, document_id')
-        .textSearch('content', keywords.split(' ').filter(w => w.length > 4).slice(0, 6).join(' | '), {
+        .textSearch('content', keywords.split(' ').filter((w: string) => w.length > 4).slice(0, 6).join(' | '), {
           type: 'websearch',
           config: 'english',
         })
         .limit(8)
 
       if (chunks && chunks.length > 0) {
+        // Get document titles for the found chunks
+        const docIds = [...new Set(chunks.map((c: { document_id: string }) => c.document_id))]
+        const { data: docs } = await supabaseAdmin
+          .from('kb_documents')
+          .select('id, title, source_type')
+          .in('id', docIds)
+
+        const docMap = Object.fromEntries((docs ?? []).map((d: { id: string; title: string; source_type: string }) => [d.id, d]))
+
         kbContext = chunks
           .map((c: { content: string }, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 400)}`)
           .join('\n\n')
-        console.log('KB text search:', chunks.length, 'chunks found')
+
+        // Build sources list (unique documents only)
+        kbSources = docIds.map(id => ({
+          title: docMap[id]?.title ?? 'Unknown',
+          source_type: docMap[id]?.source_type ?? 'unknown',
+          chunk_preview: chunks.find((c: { document_id: string }) => c.document_id === id)?.content?.slice(0, 80) ?? '',
+        }))
+
+        console.log('KB text search:', chunks.length, 'chunks from', kbSources.length, 'documents:', kbSources.map(s => s.title).join(', '))
       } else {
-        // Fallback: just grab recent chunks relevant to the condition
+        // Fallback: grab general chunks
         const { data: fallbackChunks } = await supabaseAdmin
           .from('kb_chunks')
-          .select('content')
+          .select('content, document_id')
           .limit(6)
 
         if (fallbackChunks?.length) {
+          const docIds = [...new Set(fallbackChunks.map((c: { document_id: string }) => c.document_id))]
+          const { data: docs } = await supabaseAdmin
+            .from('kb_documents')
+            .select('id, title, source_type')
+            .in('id', docIds)
+          const docMap = Object.fromEntries((docs ?? []).map((d: { id: string; title: string; source_type: string }) => [d.id, d]))
+
           kbContext = fallbackChunks
             .map((c: { content: string }, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 300)}`)
             .join('\n\n')
-          console.log('KB fallback: using', fallbackChunks.length, 'general chunks')
+          kbSources = docIds.map(id => ({
+            title: docMap[id]?.title ?? 'Unknown',
+            source_type: docMap[id]?.source_type ?? 'unknown',
+            chunk_preview: fallbackChunks.find((c: { document_id: string }) => c.document_id === id)?.content?.slice(0, 80) ?? '',
+          }))
+          console.log('KB fallback:', fallbackChunks.length, 'chunks used')
         }
       }
     } catch (e) {
@@ -226,7 +253,7 @@ Exactly ${totalWeeks} items. week_number 1 to ${totalWeeks}. Progression: weeks 
 
     const { data: roadmap, error: roadmapError } = await supabaseAdmin
       .from('roadmaps')
-      .insert({ session_id, patient_id, overview, lifestyle_guidelines, nutritionist_guidelines, weekly_schedule: weeklySchedule, duration_months, status: 'draft' })
+      .insert({ session_id, patient_id, overview, lifestyle_guidelines, nutritionist_guidelines, weekly_schedule: weeklySchedule, kb_sources: kbSources, duration_months, status: 'draft' })
       .select().single()
 
     if (roadmapError) throw new Error(roadmapError.message)

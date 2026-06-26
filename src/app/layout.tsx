@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import Sidebar from '@/components/Sidebar'
 
 export const metadata: Metadata = {
   title: 'CLP Compass',
@@ -11,12 +10,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <div style={{ display: 'flex' }}>
-          <Sidebar />
-          <main style={{ marginLeft: 240, flex: 1, minHeight: '100vh', padding: '32px 36px', background: '#f9fafb' }}>
-            {children}
-          </main>
-        </div>
+        {/* Top header */}
+        <header style={{ background: '#fff', borderBottom: '1px solid #e5e7eb', padding: '0 32px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 50 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: '#538A22', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🧭</div>
+            <div>
+              <span style={{ fontWeight: 700, fontSize: 15, color: '#111827' }}>CLP Compass</span>
+              <span style={{ fontSize: 12, color: '#9ca3af', marginLeft: 8 }}>Clinic Living Plus · Bangalore</span>
+            </div>
+          </div>
+        </header>
+        <main style={{ minHeight: 'calc(100vh - 56px)', background: '#f9fafb', padding: '32px' }}>
+          {children}
+        </main>
       </body>
     </html>
   )

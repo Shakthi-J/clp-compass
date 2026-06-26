@@ -11,12 +11,15 @@ type WeeklyPlan = {
   actions: string[]
 }
 
+type KbSource = { title: string; source_type: string; chunk_preview: string }
+
 type Roadmap = {
   id: string
   overview: string
   lifestyle_guidelines: string
   nutritionist_guidelines: string
   weekly_schedule: WeeklyPlan[]
+  kb_sources: KbSource[]
   duration_months: number
 }
 

@@ -1,83 +1,103 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { ArrowLeft } from 'lucide-react'
+import Link from 'next/link'
 
 export default function NewPatientPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
+  const [name, setName] = useState('')
+  const [gender, setGender] = useState('')
+  const [nutritionist, setNutritionist] = useState('')
   const [error, setError] = useState('')
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!name.trim()) return
     setLoading(true)
     setError('')
-    const form = e.currentTarget
-    const data = {
-      full_name: (form.elements.namedItem('full_name') as HTMLInputElement).value,
-      gender: (form.elements.namedItem('gender') as HTMLSelectElement).value || null,
-      primary_concern: (form.elements.namedItem('primary_concern') as HTMLInputElement).value || null,
-      assigned_nutritionist: (form.elements.namedItem('assigned_nutritionist') as HTMLInputElement).value || null,
-      medical_history: (form.elements.namedItem('medical_history') as HTMLTextAreaElement).value || null,
-    }
-    const res = await fetch('/api/patients', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+
+    const res = await fetch('/api/patients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ full_name: name.trim(), gender: gender || null, assigned_nutritionist: nutritionist || null }),
+    })
     const json = await res.json()
-    if (!res.ok) { setError(json.error || 'Failed to create patient'); setLoading(false); return }
-    router.push(`/patients/${json.id}`)
+    if (!res.ok) { setError(json.error); setLoading(false); return }
+
+    // Go directly to new session — no intermediate patient detail page
+    router.push(`/patients/${json.id}/sessions/new`)
   }
 
   return (
-    <div style={{ maxWidth: 600 }}>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827' }}>New Patient</h1>
-        <p style={{ color: '#6b7280', fontSize: 14, marginTop: 4 }}>Fill in the patient's information to get started.</p>
+    <div style={{ maxWidth: 480, margin: '0 auto' }}>
+      <Link href="/patients" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280', textDecoration: 'none', marginBottom: 24 }}>
+        <ArrowLeft size={14} /> Back
+      </Link>
+
+      <div style={{ background: '#fff', borderRadius: 14, padding: 32, border: '1px solid #e5e7eb' }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: '#111827', marginBottom: 6 }}>New Patient</h1>
+        <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 24 }}>After adding the patient, you'll paste the Gemini meeting doc next.</p>
+
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+              Patient Name <span style={{ color: '#ef4444' }}>*</span>
+            </label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+              autoFocus
+              placeholder="e.g. Diksha Jain"
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 15 }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Gender</label>
+            <div style={{ display: 'flex', gap: 10 }}>
+              {['Female', 'Male', 'Other'].map(g => (
+                <button key={g} type="button" onClick={() => setGender(g.toLowerCase())}
+                  style={{ flex: 1, padding: '9px 0', borderRadius: 8, fontSize: 14, fontWeight: 500, cursor: 'pointer', border: '1px solid', borderColor: gender === g.toLowerCase() ? '#538A22' : '#e5e7eb', background: gender === g.toLowerCase() ? '#F2F9EC' : '#fff', color: gender === g.toLowerCase() ? '#538A22' : '#6b7280' }}>
+                  {g}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 24 }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Assigned Nutritionist</label>
+            <input
+              value={nutritionist}
+              onChange={e => setNutritionist(e.target.value)}
+              placeholder="e.g. Bhavana"
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14 }}
+            />
+          </div>
+
+          {error && <div style={{ background: '#fef2f2', borderRadius: 8, padding: '10px 14px', color: '#dc2626', fontSize: 13, marginBottom: 16 }}>{error}</div>}
+
+          <button type="submit" disabled={loading || !name.trim()}
+            style={{ width: '100%', padding: '12px', background: name.trim() ? '#538A22' : '#e5e7eb', color: name.trim() ? '#fff' : '#9ca3af', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 700, cursor: name.trim() ? 'pointer' : 'not-allowed', transition: 'all 0.15s' }}>
+            {loading ? 'Creating...' : 'Continue → Paste Meeting Doc'}
+          </button>
+        </form>
       </div>
 
-      <form onSubmit={handleSubmit} style={{ background: '#fff', borderRadius: 12, padding: 28, border: '1px solid #e5e7eb' }}>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Full Name <span style={{ color: '#ef4444' }}>*</span></label>
-          <input name="full_name" required style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14 }} />
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Gender</label>
-          <select name="gender" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, background: '#fff' }}>
-            <option value="">Select</option>
-            <option value="male">Male</option>
-            <option value="female">Female</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-
-        <div style={{ marginBottom: 16, padding: 16, background: '#F2F9EC', borderRadius: 10, border: '1px solid #C8E9A8' }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#538A22', marginBottom: 6 }}>
-            Primary Health Concern <span style={{ color: '#ef4444' }}>*</span>
-          </label>
-          <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Be specific — this drives the knowledge base search. e.g. "Hashimoto's thyroiditis with fatigue and weight gain"</p>
-          <input name="primary_concern" required placeholder="e.g. PCOS with insulin resistance, weight gain and irregular periods"
-            style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #C8E9A8', fontSize: 14 }} />
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Assigned Nutritionist</label>
-          <input name="assigned_nutritionist" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14 }} />
-        </div>
-
-        <div style={{ marginBottom: 22 }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Medical History</label>
-          <textarea name="medical_history" rows={4} placeholder="Past diagnoses, medications, surgeries, family history..."
-            style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, resize: 'vertical' }} />
-        </div>
-
-        {error && <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', color: '#dc2626', fontSize: 13, marginBottom: 16 }}>{error}</div>}
-
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button type="button" onClick={() => router.back()} style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', fontSize: 14, cursor: 'pointer' }}>Cancel</button>
-          <button type="submit" disabled={loading} style={{ padding: '10px 24px', borderRadius: 8, background: '#538A22', color: '#fff', border: 'none', fontSize: 14, fontWeight: 600, cursor: 'pointer', opacity: loading ? 0.7 : 1 }}>
-            {loading ? 'Saving...' : 'Create Patient'}
-          </button>
-        </div>
-      </form>
+      {/* Flow indicator */}
+      <div style={{ marginTop: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+        {['Add Patient', 'Paste Gemini Doc', 'Q&A', 'Generate Roadmap'].map((step, i) => (
+          <div key={step} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 22, height: 22, borderRadius: '50%', background: i === 0 ? '#538A22' : '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: i === 0 ? '#fff' : '#9ca3af' }}>{i + 1}</div>
+              <span style={{ fontSize: 11, fontWeight: i === 0 ? 700 : 400, color: i === 0 ? '#538A22' : '#9ca3af' }}>{step}</span>
+            </div>
+            {i < 3 && <span style={{ color: '#d1d5db', fontSize: 12 }}>›</span>}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
