@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+:root {
+  --clp-green: #538A22;
+  --clp-light: #F2F9EC;
+  --clp-mid: #C8E9A8;
+  --clp-dark: #3a6118;
+  --clp-muted: #7aaa44;
+  --bg: #f9fafb;
+  --surface: #ffffff;
+  --border: #e5e7eb;
+  --text: #111827;
+  --text-muted: #6b7280;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }

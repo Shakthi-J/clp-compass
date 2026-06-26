@@ -1,0 +1,37 @@
+-- ============================================================
+-- CLP COMPASS — Migration: update vector dim to 384 (Hugging Face)
+-- Run this in Supabase SQL Editor AFTER schema.sql
+-- ============================================================
+
+-- Drop old index and column, recreate with correct dimension
+ALTER TABLE kb_chunks DROP COLUMN IF EXISTS embedding;
+ALTER TABLE kb_chunks ADD COLUMN embedding vector(384);
+
+-- Recreate index
+DROP INDEX IF EXISTS kb_chunks_embedding_idx;
+CREATE INDEX kb_chunks_embedding_idx ON kb_chunks 
+  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- Recreate the search function with correct dimension
+CREATE OR REPLACE FUNCTION match_kb_chunks(
+  query_embedding vector(384),
+  match_threshold float DEFAULT 0.5,
+  match_count int DEFAULT 5
+)
+RETURNS TABLE (
+  id UUID,
+  document_id UUID,
+  content TEXT,
+  similarity FLOAT
+)
+LANGUAGE SQL STABLE AS $$
+  SELECT
+    kb_chunks.id,
+    kb_chunks.document_id,
+    kb_chunks.content,
+    1 - (kb_chunks.embedding <=> query_embedding) AS similarity
+  FROM kb_chunks
+  WHERE 1 - (kb_chunks.embedding <=> query_embedding) > match_threshold
+  ORDER BY similarity DESC
+  LIMIT match_count;
+$$;
