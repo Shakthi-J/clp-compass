@@ -149,7 +149,7 @@ The AI will automatically extract:
           </div>
           <div>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Post-Meeting Notes <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span></label>
-            <textarea value={postNotes} onChange={e => postNotes(e.target.value)} rows={3}
+            <textarea value={postNotes} onChange={e => setPostNotes(e.target.value)} rows={3}
               placeholder="Observations after the session..."
               style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, resize: 'vertical' }} />
           </div>
