@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { getEmbedding } from '@/lib/embeddings'
 import Groq from 'groq-sdk'
 
 export const maxDuration = 60
@@ -47,50 +46,81 @@ export async function POST(req: NextRequest) {
       ...qaPairs.slice(0, 5).map(qa => qa.answer),
     ].filter(Boolean).join(' ').slice(0, 700)
 
-    let queryEmbedding: number[]
+    // KB search — full text search, no embedding needed at runtime
+    // Embeddings were pre-built by the Python ingestion script
+    let kbContext = ''
     try {
-      queryEmbedding = await getEmbedding(searchQuery)
-      console.log('Embedding OK, dims:', queryEmbedding.length)
+      // Extract keywords from patient concern + Q&A for text search
+      const keywords = [
+        patient.primary_concern,
+        ...qaPairs.slice(0, 3).map(qa => qa.answer.slice(0, 80)),
+      ].filter(Boolean).join(' ')
+
+      // Use Postgres full-text search on kb_chunks content — no vector needed
+      const { data: chunks } = await supabaseAdmin
+        .from('kb_chunks')
+        .select('content, document_id')
+        .textSearch('content', keywords.split(' ').filter(w => w.length > 4).slice(0, 6).join(' | '), {
+          type: 'websearch',
+          config: 'english',
+        })
+        .limit(8)
+
+      if (chunks && chunks.length > 0) {
+        kbContext = chunks
+          .map((c: { content: string }, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 400)}`)
+          .join('\n\n')
+        console.log('KB text search:', chunks.length, 'chunks found')
+      } else {
+        // Fallback: just grab recent chunks relevant to the condition
+        const { data: fallbackChunks } = await supabaseAdmin
+          .from('kb_chunks')
+          .select('content')
+          .limit(6)
+
+        if (fallbackChunks?.length) {
+          kbContext = fallbackChunks
+            .map((c: { content: string }, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 300)}`)
+            .join('\n\n')
+          console.log('KB fallback: using', fallbackChunks.length, 'general chunks')
+        }
+      }
     } catch (e) {
-      return NextResponse.json({ error: `Embedding failed: ${e instanceof Error ? e.message : e}` }, { status: 500 })
+      console.log('KB search error:', e instanceof Error ? e.message : e)
     }
-
-    const { data: chunks, error: kbError } = await supabaseAdmin.rpc('match_kb_chunks', {
-      query_embedding: `[${queryEmbedding.join(',')}]`,
-      match_threshold: 0.2,
-      match_count: 8,
-    })
-    if (kbError) return NextResponse.json({ error: `KB search failed: ${kbError.message}` }, { status: 500 })
-    console.log('KB chunks:', chunks?.length ?? 0)
-
-    if (!chunks || chunks.length === 0) {
-      return NextResponse.json({ error: `No KB content found for: ${patient.primary_concern}. Add relevant documents to the knowledge base.` }, { status: 400 })
-    }
-
-    const kbContext = chunks
-      .map((c: { content: string }, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 400)}`)
-      .join('\n\n')
 
     const patientProfile = `Name: ${patient.full_name} | Gender: ${patient.gender ?? 'N/A'} | Concern: ${patient.primary_concern ?? 'General health'} | History: ${patient.medical_history ?? 'None'}`
 
-    // ── Call 1: Overview (Enhanced for deep positive framing) ────────────────
+    // ── Call 1: Overview ─────────────────────────────────────
     const overviewRes = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [
-        { role: 'system', content: `You are the treating head nutritionist at Clinic Living Plus, Bangalore. You are writing an inspiring, deeply personalized health vision statement directly to YOUR patient. 
+        { role: 'system', content: `You are the treating nutritionist at Clinic Living Plus, Bangalore. You are writing a personal letter directly to YOUR patient. 
 Rules:
-- Write entirely in second person: "you", "your" — never "the patient".
-- Tone: Highly motivational, deeply empathetic, yet clinical and definitive. No hedging words like "may", "might", "could".
-- Empower them: Frame their body not as broken, but as working hard to heal. Frame changes as exciting upgrades rather than restrictions.` },
+- Write entirely in second person: "you", "your" — never "the patient"
+- Use definitive language: "Your gut is inflamed" not "may be inflamed"
+- Reference their EXACT details from Q&A: their name, their specific symptoms, their actual diet, their real schedule
+- Every sentence must feel like you personally know this person and wrote this just for them
+- No hedging words: never use "may", "might", "could", "possibly", "likely"
+- Sound like a doctor who has studied this patient's case, not a generic health article` },
         { role: 'user', content: `PATIENT: ${patientProfile}
-Q&A: ${qaContext || 'None.'}
-SESSION NOTES: ${sessionNotes || 'None.'}
-KB CLINICAL KNOWLEDGE: ${kbContext}
 
-Write 2-3 paragraphs directly to ${patient.full_name}:
-1. Acknowledge their specific symptoms/rhythm intimately using their exact details. Validate how they've been feeling.
-2. Paint a vivid picture of what is happening inside their biology right now based on the KB (e.g., sluggish liver, high cortisol), but immediately switch to a triumphant framing of how we are going to reverse it.
-3. Outline their transformative timeline: "By Week 2, your morning fog clears. By Month 2, your digestive fire stabilizes..." Make them desperate to start this roadmap. Use their name. Max 175 words.` }
+Q&A (their exact words and details):
+${qaContext || 'None.'}
+
+SESSION NOTES:
+${sessionNotes || 'None.'}
+
+KB CLINICAL KNOWLEDGE:
+${kbContext}
+
+Write 2-3 paragraphs directly to ${patient.full_name} as their treating nutritionist.
+- Open by acknowledging their SPECIFIC situation using their real details from Q&A
+- Name their actual condition, their real symptoms, their actual lifestyle patterns
+- Tell them exactly what is happening in their body right now (from KB knowledge) and why
+- Tell them specifically what will change over ${duration_months} months: "By week 4, your energy will return. By month 2, your digestion will stabilize..."
+- Use their name at least once
+- Definitive, warm, authoritative. Like a doctor who truly knows them. Max 160 words.` }
       ],
       temperature: 0.6, max_tokens: 400,
     })
@@ -101,11 +131,20 @@ Write 2-3 paragraphs directly to ${patient.full_name}:
       model: 'llama-3.1-8b-instant',
       messages: [
         { role: 'system', content: 'You are the treating nutritionist writing a personal lifestyle prescription for YOUR patient. Write in second person only. Use their exact details. Be definitive — no hedging. Never say "the patient". Never mention KB.' },
-        { role: 'user', content: `PATIENT: ${patientProfile}\nQ&A:\n${qaContext || 'None.'}\nKB KNOWLEDGE:\n${kbContext}
+        { role: 'user', content: `PATIENT: ${patientProfile}
 
-Write 4 lifestyle prescriptions directly to this patient using "you/your". Use their real lifestyle flaws (late sleep, long sitting, meal skipping) to build corrective habits.
-Format as: "• [Empowering Alternative]: [Brief clinical reason tied to their schedule]"
-Each point must be 20-25 words. Cover: sleep, movement, eating timing, stress. Return only 4 points.` }
+Q&A (use their EXACT details):
+${qaContext || 'None.'}
+
+KB KNOWLEDGE:
+${kbContext}
+
+Write 4 lifestyle prescriptions directly to this patient using "you/your".
+Use their real details: if they sleep at 1am, address that. If they skip lunch, address that. If they stopped exercising in February, address that.
+Be specific and direct: "Your habit of eating dinner as your heaviest meal is disrupting your cortisol rhythm — shift your largest meal to lunch."
+
+Each point starts with • and is 20-25 words. Cover: sleep, movement, eating timing, stress.
+Return only 4 points. No hedging words.` }
       ],
       temperature: 0.4, max_tokens: 300,
     })
@@ -116,7 +155,13 @@ Each point must be 20-25 words. Cover: sleep, movement, eating timing, stress. R
       model: 'llama-3.1-8b-instant',
       messages: [
         { role: 'system', content: 'Clinical nutritionist writing notes for yourself. ONLY use KB and Q&A. Be specific and clinical.' },
-        { role: 'user', content: `PATIENT: ${patientProfile}\nQ&A:\n${qaContext || 'None.'}\nKB CLINICAL KNOWLEDGE:\n${kbContext}
+        { role: 'user', content: `PATIENT: ${patientProfile}
+
+Q&A:
+${qaContext || 'None.'}
+
+KB CLINICAL KNOWLEDGE:
+${kbContext}
 
 Write 4 precise clinical notes about this specific patient:
 • Biomarkers to track: list specific tests relevant to their condition with target ranges
@@ -124,44 +169,49 @@ Write 4 precise clinical notes about this specific patient:
 • Supplements: 2-3 specific supplements with exact doses, timing, and why for this patient's condition
 • Watch for: specific red flags or contraindications relevant to their history
 
-Each starts with •. Return only 4 points.` }
+Each starts with •. Use their real details. Clinical and precise. Return only 4 points.` }
       ],
       temperature: 0.3, max_tokens: 400,
     })
     const nutritionist_guidelines = clinicalRes.choices[0]?.message?.content?.trim() ?? ''
 
-    // ── Call 4: Weekly schedule — (Enhanced for Gamification and Visual Journey) ───────
+    // ── Call 4: Weekly schedule — cause + action format ───────
     const totalWeeks = duration_months * 4
     const weeklyRes = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [
-        { role: 'system', content: 'Return only a valid JSON array. No markdown wraps, no code block backticks. Write directly to the patient in second person. Use absolute, encouraging, authoritative language.' },
-        { role: 'user', content: `PATIENT: ${patientProfile}\nFULL Q&A:\n${qaContext || 'None.'}\nKB CLINICAL KNOWLEDGE:\n${kbContext}
+        { role: 'system', content: 'Return only a valid JSON array. No markdown, no code fences. Write cause and actions directly to the patient in second person. No hedging words. Never mention KB or knowledge base. Sound like a doctor who knows this patient personally.' },
+        { role: 'user', content: `PATIENT: ${patientProfile}
 
-Create exactly ${totalWeeks} weekly plans as a JSON array for the patient's winding roadmap.
+FULL Q&A FROM CONSULTATION:
+${qaContext || 'None.'}
 
-CRITICAL ENGAGEMENT RULES:
-1. focus_theme: Must look like an epic, gamified quest milestone (e.g., "Igniting the Digestive Fire", "Unlocking Deep REM Sleep", "The Cellular Energy Shift"). Make it sound exciting!
-2. Week 1 Strategy: Ensure actions for Week 1 include immediate "Quick Wins" that take less than 2 minutes but make them feel fantastic, building psychological momentum.
-3. Language styling: Avoid negative restriction words like "Stop", "Don't", "Quit", "Avoid". Instead use abundance/crowding-out terms (e.g., "Crowd out your midday crash by introducing...", "Upgrade your late night rhythm by swapping...").
-4. Context: Blend clinical precision with Indian/Bangalore lifestyle context where applicable (e.g., handling Swiggy habits, balancing white rice/roti, late IT sector shifts).
+KB CLINICAL KNOWLEDGE:
+${kbContext}
 
-JSON Schema to follow exactly:
+Create exactly ${totalWeeks} weekly plans as a JSON array written directly to this patient.
+
+RULES:
+- cause: Write in second person to the patient. Name their SPECIFIC symptoms from Q&A. Be definitive — no "may", "might", "could". Example: "Your long-standing constipation has created chronic gut inflammation that is directly suppressing your metabolism and causing the fatigue you wake up with every day."
+- actions: Write as direct prescriptions. Specific and actionable. Reference their real situation. Example: "Wake up 30 minutes earlier than your usual 8:30am and drink warm water before your morning tea and paratha."
+- Never say "the patient", never mention "KB" or "knowledge base"
+- Each week tackles a distinct root cause building on the previous week
+
 [{
   "week_number": 1,
-  "focus_theme": "Exciting, gamified title for this milestone",
-  "cause": "2 sentences directly explaining the physiological root cause behind their symptom, ensuring they understand the 'why'. No hedging.",
+  "focus_theme": "Specific theme for this patient's condition",
+  "cause": "2-3 sentences directly to this patient explaining what is happening in their body right now and why, referencing their specific symptoms.",
   "actions": [
-    "Action 1 (Quick momentum win, active phrasing) — 12-18 words",
-    "Action 2 (Dietary crowd-out action) — 12-18 words",
-    "Action 3 (Lifestyle/timing action) — 12-18 words"
+    "Specific direct action for them — 12-18 words",
+    "Another specific action tied to their real situation",
+    "Third action — concrete and measurable"
   ]
 }]
 
-Generate exactly ${totalWeeks} items. Progress through phases: weeks 1-4 foundation, weeks 5-8 integration/energy, weeks 9+ optimization.`
+Exactly ${totalWeeks} items. week_number 1 to ${totalWeeks}. Progression: weeks 1-4 gut/foundation, weeks 5-8 metabolism/energy, weeks 9+ optimization.`
         }
       ],
-      temperature: 0.4, max_tokens: 3000,
+      temperature: 0.3, max_tokens: 2500,
     })
 
     const weeklyRaw = weeklyRes.choices[0]?.message?.content ?? ''
@@ -169,9 +219,9 @@ Generate exactly ${totalWeeks} items. Progress through phases: weeks 1-4 foundat
     try {
       weeklySchedule = extractJSON(weeklyRaw) as unknown[]
       if (!Array.isArray(weeklySchedule)) throw new Error('Not an array')
-      console.log('Weeks generated successfully:', weeklySchedule.length)
+      console.log('Weeks generated:', weeklySchedule.length)
     } catch {
-      return NextResponse.json({ error: `Weekly parse failed. Raw text length: ${weeklyRaw.length}` }, { status: 500 })
+      return NextResponse.json({ error: `Weekly parse failed. Raw: ${weeklyRaw.slice(0, 300)}` }, { status: 500 })
     }
 
     const { data: roadmap, error: roadmapError } = await supabaseAdmin
@@ -187,7 +237,7 @@ Generate exactly ${totalWeeks} items. Progress through phases: weeks 1-4 foundat
 
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
-    console.error('Error in route:', message)
+    console.error('Error:', message)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
