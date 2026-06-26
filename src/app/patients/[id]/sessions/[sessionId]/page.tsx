@@ -184,17 +184,7 @@ export default function InterpretPage() {
             <div style={{ fontSize: 15, lineHeight: 1.9, color: '#e2e8f0', whiteSpace: 'pre-wrap' }}>{roadmap.overview}</div>
           </div>
 
-          {/* ── Lifestyle + Clinical ──────────────────────── */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
-            <div style={{ background: '#F2F9EC', borderRadius: 12, padding: '20px 22px', border: '1px solid #C8E9A8' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#538A22', letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginBottom: 12 }}>🌿 Lifestyle Guidelines</div>
-              <div style={{ fontSize: 13, color: '#374151', lineHeight: 2, whiteSpace: 'pre-wrap' }}>{roadmap.lifestyle_guidelines}</div>
-            </div>
-            <div style={{ background: '#f8fafc', borderRadius: 12, padding: '20px 22px', border: '1px solid #e2e8f0' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginBottom: 12 }}>🩺 Clinical Notes</div>
-              <div style={{ fontSize: 13, color: '#374151', lineHeight: 2, whiteSpace: 'pre-wrap' }}>{roadmap.nutritionist_guidelines}</div>
-            </div>
-          </div>
+         
 
           {/* ── WINDING ROAD + MONTHS ─────────────────────── */}
           <div style={{ marginBottom: 8 }}>

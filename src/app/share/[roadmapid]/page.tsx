@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase'
 import { notFound } from 'next/navigation'
-import ShareClient from '../../../components/ShareClient'
+import ShareClient from '@/components/ShareClient'
 
 export default async function SharePage({ params }: { params: Promise<{ roadmapId: string }> }) {
   const { roadmapId } = await params
