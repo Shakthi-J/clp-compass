@@ -1,7 +1,7 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { Loader2, Sparkles, CheckCircle, ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import Link from 'next/link'
 
 export default function NewSessionPage() {
@@ -9,26 +9,36 @@ export default function NewSessionPage() {
   const params = useParams()
   const patientId = params.id as string
 
-  const [loading, setLoading] = useState(false)
-  const [parsing, setParsing] = useState(false)
-  const [parsed, setParsed] = useState<{ qa_count: number; patient: Record<string, string> } | null>(null)
-  const [parseError, setParseError] = useState('')
-  const [error, setError] = useState('')
-
-  const [sessionType, setSessionType] = useState('first-meet')
+  const [sessionType, setSessionType] = useState<'first-meet' | 'follow-up' | 'review'>('first-meet')
   const [geminiDoc, setGeminiDoc] = useState('')
   const [preNotes, setPreNotes] = useState('')
-  const [postNotes, setPostNotes] = useState('')
+  const [showGemini, setShowGemini] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [parsing, setParsing] = useState(false)
+  const [parsed, setParsed] = useState<{ qa_count: number } | null>(null)
+  const [sessionCount, setSessionCount] = useState(0)
 
-  // Step 1: Save session first, get session ID back
-  // Step 2: Parse Gemini doc against that session ID
+  // Check if this patient has existing sessions
+  useEffect(() => {
+    fetch(`/api/sessions?patient_id=${patientId}`)
+      .then(r => r.json())
+      .then(data => {
+        const count = Array.isArray(data) ? data.length : 0
+        setSessionCount(count)
+        if (count > 0) setSessionType('follow-up')
+      })
+      .catch(() => {})
+  }, [patientId])
+
+  const isFirstSession = sessionCount === 0
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError('')
 
     try {
-      // Save session
       const sessionRes = await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -37,170 +47,153 @@ export default function NewSessionPage() {
           session_type: sessionType,
           gemini_doc_raw: geminiDoc || null,
           pre_meeting_notes: preNotes || null,
-          post_meeting_notes: postNotes || null,
         }),
       })
       const sessionJson = await sessionRes.json()
-      if (!sessionRes.ok) { setError(sessionJson.error || 'Failed to save session'); setLoading(false); return }
+      if (!sessionRes.ok) { setError(sessionJson.error || 'Failed'); setLoading(false); return }
 
       const sessionId = sessionJson.id
 
-      // Auto-parse Gemini doc if present
+      // Auto-parse Gemini doc if pasted
       if (geminiDoc.trim().length > 100) {
         setParsing(true)
         const parseRes = await fetch('/api/parse-gemini', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            gemini_doc: geminiDoc,
-            patient_id: patientId,
-            session_id: sessionId,
-          }),
+          body: JSON.stringify({ gemini_doc: geminiDoc, patient_id: patientId, session_id: sessionId }),
         })
         const parseJson = await parseRes.json()
         setParsing(false)
-
-        if (!parseRes.ok) {
-          setParseError(`Auto-extract warning: ${parseJson.error}`)
-          // Still redirect even if parse fails
-        } else {
-          setParsed(parseJson.extracted)
-          // Small delay to show success state
-          await new Promise(r => setTimeout(r, 1200))
-        }
+        if (parseRes.ok) setParsed(parseJson.extracted)
       }
 
       router.push(`/patients/${patientId}/sessions/${sessionId}`)
     } catch {
       setError('Network error — try again')
-    } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div style={{ maxWidth: 560, margin: '0 auto' }}>
       <Link href={`/patients/${patientId}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280', textDecoration: 'none', marginBottom: 20 }}>
         <ArrowLeft size={14} /> Back to Patient
       </Link>
 
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#111827' }}>New Session</h1>
-        <p style={{ color: '#6b7280', fontSize: 14, marginTop: 4 }}>
-          Paste the Gemini meeting doc — AI will automatically extract the patient profile and clinical Q&A.
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>
+          {isFirstSession ? 'Start First Session' : 'New Session'}
+        </h1>
+        <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
+          {isFirstSession
+            ? 'You\'ll be taken to the Q&A intake right after saving.'
+            : 'Add session notes or paste the Gemini doc from your meeting.'
+          }
         </p>
       </div>
 
-      {/* How it works banner */}
-      <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 10, padding: '14px 18px', marginBottom: 22, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-        <Sparkles size={18} color="#538A22" style={{ flexShrink: 0, marginTop: 2 }} />
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 13, color: '#3a6118', marginBottom: 3 }}>AI Auto-Extract</div>
-          <div style={{ fontSize: 12, color: '#538A22', lineHeight: 1.6 }}>
-            Paste the full Gemini meeting document below. AI will extract the patient's health concern, medical history, and all clinical details as Q&A pairs — ready for roadmap generation.
+      {/* Flow steps */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24 }}>
+        {(isFirstSession
+          ? ['Start Session', 'Q&A Intake', 'Generate Roadmap']
+          : ['Add Session', 'Update Q&A', 'Update Roadmap']
+        ).map((step, i, arr) => (
+          <div key={step} style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 24, height: 24, borderRadius: '50%', background: i === 0 ? '#538A22' : '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: i === 0 ? '#fff' : '#9ca3af', flexShrink: 0 }}>{i + 1}</div>
+              <span style={{ fontSize: 12, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? '#538A22' : '#9ca3af', whiteSpace: 'nowrap' }}>{step}</span>
+            </div>
+            {i < arr.length - 1 && <div style={{ flex: 1, height: 1, background: '#e5e7eb', margin: '0 8px' }} />}
           </div>
-        </div>
+        ))}
       </div>
 
-      <form onSubmit={handleSubmit} style={{ background: '#fff', borderRadius: 12, padding: 28, border: '1px solid #e5e7eb' }}>
+      <form onSubmit={handleSubmit} style={{ background: '#fff', borderRadius: 12, padding: 24, border: '1px solid #e5e7eb' }}>
 
-        <div style={{ marginBottom: 18 }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Session Type</label>
-          <select value={sessionType} onChange={e => setSessionType(e.target.value)}
-            style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, background: '#fff' }}>
-            <option value="first-meet">First Meet</option>
-            <option value="follow-up">Follow-up</option>
-            <option value="review">Review</option>
-          </select>
+        {/* Session type */}
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>Session Type</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {(['first-meet', 'follow-up', 'review'] as const).map(t => (
+              <button key={t} type="button" onClick={() => setSessionType(t)} style={{ flex: 1, padding: '8px 4px', borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: '1px solid', borderColor: sessionType === t ? '#538A22' : '#e5e7eb', background: sessionType === t ? '#F2F9EC' : '#fff', color: sessionType === t ? '#538A22' : '#6b7280', textTransform: 'capitalize' }}>
+                {t.replace('-', ' ')}
+              </button>
+            ))}
+          </div>
         </div>
 
-        {/* Gemini doc — main input */}
-        <div style={{ marginBottom: 18 }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>
-            Gemini Meeting Document <span style={{ color: '#538A22', fontWeight: 400, fontSize: 12 }}>← paste here for auto-extract</span>
+        {/* Pre-session notes */}
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
+            Pre-Session Notes <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span>
           </label>
-          <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>
-            Copy the full text from your Google Meet Gemini notes and paste below
-          </p>
           <textarea
-            value={geminiDoc}
-            onChange={e => setGeminiDoc(e.target.value)}
-            rows={10}
-            placeholder="Paste the full Gemini meeting document here...
-
-The AI will automatically extract:
-• Patient's primary health concern
-• Medical history and past diagnoses  
-• Lifestyle patterns (diet, sleep, stress, activity)
-• Gut health and symptoms
-• Lab results and clinical findings
-• All Q&A pairs for roadmap generation"
-            style={{ width: '100%', padding: '12px 14px', borderRadius: 8, border: '2px solid #C8E9A8', fontSize: 13, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6, background: '#fafff8' }}
+            value={preNotes}
+            onChange={e => setPreNotes(e.target.value)}
+            rows={3}
+            placeholder={isFirstSession
+              ? "Any observations before the session starts — patient background, referral notes..."
+              : "Notes before the follow-up — what you want to check on, concerns from last session..."
+            }
+            style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, resize: 'vertical' }}
           />
         </div>
 
-        {/* Optional notes */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 22 }}>
-          <div>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Pre-Meeting Notes <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span></label>
-            <textarea value={preNotes} onChange={e => setPreNotes(e.target.value)} rows={3}
-              placeholder="Your thoughts before the session..."
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, resize: 'vertical' }} />
+        {/* Gemini doc — collapsible for first session, prominent for follow-up */}
+        {isFirstSession ? (
+          <div style={{ marginBottom: 20 }}>
+            <button type="button" onClick={() => setShowGemini(g => !g)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              {showGemini ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              Already have a Gemini meeting doc? Add it here
+            </button>
+            {showGemini && (
+              <textarea
+                value={geminiDoc}
+                onChange={e => setGeminiDoc(e.target.value)}
+                rows={6}
+                placeholder="Paste Gemini meeting document..."
+                style={{ width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, resize: 'vertical' }}
+              />
+            )}
           </div>
-          <div>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>Post-Meeting Notes <span style={{ color: '#9ca3af', fontWeight: 400 }}>(optional)</span></label>
-            <textarea value={postNotes} onChange={e => setPostNotes(e.target.value)} rows={3}
-              placeholder="Observations after the session..."
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, resize: 'vertical' }} />
+        ) : (
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>
+              Gemini Meeting Document
+              <span style={{ fontSize: 11, fontWeight: 400, color: '#538A22', marginLeft: 8 }}>← paste to auto-extract</span>
+            </label>
+            <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>Copy from your Google Meet Gemini notes — AI will extract Q&A and update the patient profile</p>
+            <textarea
+              value={geminiDoc}
+              onChange={e => setGeminiDoc(e.target.value)}
+              rows={8}
+              placeholder="Paste the Gemini meeting document here..."
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '2px solid #C8E9A8', fontSize: 13, resize: 'vertical', background: '#fafff8' }}
+            />
           </div>
-        </div>
+        )}
 
         {/* Status messages */}
         {parsing && (
-          <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 8, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Loader2 size={16} color="#538A22" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 13, color: '#3a6118' }}>AI is extracting clinical data...</div>
-              <div style={{ fontSize: 12, color: '#538A22', marginTop: 2 }}>Reading patient profile, symptoms, lifestyle patterns from Gemini doc</div>
-            </div>
+          <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 8, padding: '10px 14px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Loader2 size={14} color="#538A22" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, color: '#3a6118', fontWeight: 600 }}>AI is extracting clinical data from the Gemini doc...</span>
           </div>
         )}
-
-        {parsed && !parsing && (
-          <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 8, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <CheckCircle size={16} color="#538A22" style={{ flexShrink: 0 }} />
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 13, color: '#3a6118' }}>Extracted successfully</div>
-              <div style={{ fontSize: 12, color: '#538A22', marginTop: 2 }}>
-                Patient profile updated · {parsed.qa_count} Q&A pairs generated · Ready for roadmap
-              </div>
-            </div>
+        {parsed && (
+          <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#3a6118', fontWeight: 600 }}>
+            ✅ Extracted {parsed.qa_count} Q&A pairs — patient profile updated
           </div>
         )}
-
-        {parseError && (
-          <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: '#92400e' }}>
-            ⚠️ {parseError} — session saved, but check patient profile manually.
-          </div>
-        )}
-
         {error && (
-          <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', color: '#dc2626', fontSize: 13, marginBottom: 16 }}>{error}</div>
+          <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', color: '#dc2626', fontSize: 13, marginBottom: 14 }}>{error}</div>
         )}
 
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button type="button" onClick={() => router.back()}
-            style={{ padding: '10px 20px', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', fontSize: 14, cursor: 'pointer' }}>
-            Cancel
-          </button>
-          <button type="submit" disabled={loading || parsing}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 8, background: '#538A22', color: '#fff', border: 'none', fontSize: 14, fontWeight: 600, cursor: (loading || parsing) ? 'not-allowed' : 'pointer', opacity: (loading || parsing) ? 0.7 : 1 }}>
-            {loading || parsing
-              ? <><Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> {parsing ? 'Extracting...' : 'Saving...'}</>
-              : <><Sparkles size={15} /> Save & Auto-Extract</>
-            }
-          </button>
-        </div>
+        <button type="submit" disabled={loading}
+          style={{ width: '100%', padding: '12px', background: '#538A22', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
+          {loading ? 'Saving...' : isFirstSession ? 'Start Session → Go to Q&A' : 'Save Session → Update Q&A'}
+        </button>
       </form>
 
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>

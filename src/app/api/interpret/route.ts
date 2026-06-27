@@ -27,218 +27,198 @@ export async function POST(req: NextRequest) {
     if (!session || !patient) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     const qaPairs: { question: string; answer: string }[] = session.qa_pairs ?? []
-    const qaContext = qaPairs.length > 0
-      ? qaPairs.map((qa, i) => `Q${i+1}: ${qa.question}\nAnswer: ${qa.answer}`).join('\n\n')
-      : ''
+    const roadmapInstructions = session.roadmap_instructions ?? ''
 
-    const sessionNotes = [
-      session.pre_meeting_notes ? `Pre-meeting: ${session.pre_meeting_notes}` : '',
-      session.gemini_doc_raw ? `Meeting notes: ${session.gemini_doc_raw.slice(0, 500)}` : '',
-      session.post_meeting_notes ? `Post-meeting: ${session.post_meeting_notes}` : '',
-    ].filter(Boolean).join('\n')
+    const fullQA = qaPairs.map((qa, i) => `Q${i+1}: ${qa.question}\nAnswer: ${qa.answer}`).join('\n\n')
+    const geminiSnippet = session.gemini_doc_raw?.slice(0, 800) ?? ''
 
     // ── KB Search ────────────────────────────────────────────
-    console.log('=== INTERPRETATION START ===')
-    console.log('Patient:', patient.full_name, '| Concern:', patient.primary_concern)
-
-    const searchQuery = [
-      patient.primary_concern, patient.medical_history,
-      ...qaPairs.slice(0, 5).map(qa => qa.answer),
-    ].filter(Boolean).join(' ').slice(0, 700)
-
-    // KB search — full text search, no embedding needed at runtime
     let kbContext = ''
     let kbSources: { title: string; source_type: string; chunk_preview: string }[] = []
     try {
-      const keywords = [
-        patient.primary_concern,
-        ...qaPairs.slice(0, 3).map(qa => qa.answer.slice(0, 80)),
-      ].filter(Boolean).join(' ')
+      const stopWords = new Set(['the','patient','is','are','was','with','and','has','have','been','their','they','this','that','from','for','not','but','can','also','more','very','some','into','over','after','history','experiencing','currently'])
+      const rawText = [patient.primary_concern, patient.medical_history, ...qaPairs.slice(0, 5).map(qa => qa.answer)].filter(Boolean).join(' ')
+      const keywords = [...new Set(rawText.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w)).slice(0, 10))].join(' | ')
+      console.log('KB keywords:', keywords)
 
       const { data: chunks } = await supabaseAdmin
-        .from('kb_chunks')
-        .select('content, document_id')
-        .textSearch('content', keywords.split(' ').filter((w: string) => w.length > 4).slice(0, 6).join(' | '), {
-          type: 'websearch',
-          config: 'english',
-        })
+        .from('kb_chunks').select('content, document_id')
+        .textSearch('content', keywords, { type: 'websearch', config: 'english' })
         .limit(8)
 
-      if (chunks && chunks.length > 0) {
-        // Get document titles for the found chunks
-        const docIds = [...new Set(chunks.map((c: { document_id: string }) => c.document_id))]
-        const { data: docs } = await supabaseAdmin
-          .from('kb_documents')
-          .select('id, title, source_type')
-          .in('id', docIds)
-
-        const docMap = Object.fromEntries((docs ?? []).map((d: { id: string; title: string; source_type: string }) => [d.id, d]))
-
-        kbContext = chunks
-          .map((c: { content: string }, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 400)}`)
-          .join('\n\n')
-
-        // Build sources list (unique documents only)
-        kbSources = docIds.map(id => ({
-          title: docMap[id]?.title ?? 'Unknown',
-          source_type: docMap[id]?.source_type ?? 'unknown',
-          chunk_preview: chunks.find((c: { document_id: string }) => c.document_id === id)?.content?.slice(0, 80) ?? '',
-        }))
-
-        console.log('KB text search:', chunks.length, 'chunks from', kbSources.length, 'documents:', kbSources.map(s => s.title).join(', '))
+      if (chunks?.length) {
+        const docIds = [...new Set(chunks.map((c: {document_id:string}) => c.document_id))]
+        const { data: docs } = await supabaseAdmin.from('kb_documents').select('id, title, source_type').in('id', docIds)
+        const docMap = Object.fromEntries((docs ?? []).map((d: {id:string;title:string;source_type:string}) => [d.id, d]))
+        kbContext = chunks.map((c: {content:string}, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 350)}`).join('\n\n')
+        kbSources = docIds.map(id => ({ title: docMap[id]?.title ?? 'Unknown', source_type: docMap[id]?.source_type ?? 'unknown', chunk_preview: chunks.find((c: {document_id:string}) => c.document_id === id)?.content?.slice(0, 80) ?? '' }))
+        console.log('KB chunks:', chunks.length, 'from docs:', kbSources.map(s => s.title).join(', '))
       } else {
-        // Fallback: grab general chunks
-        const { data: fallbackChunks } = await supabaseAdmin
-          .from('kb_chunks')
-          .select('content, document_id')
-          .limit(6)
-
-        if (fallbackChunks?.length) {
-          const docIds = [...new Set(fallbackChunks.map((c: { document_id: string }) => c.document_id))]
-          const { data: docs } = await supabaseAdmin
-            .from('kb_documents')
-            .select('id, title, source_type')
-            .in('id', docIds)
-          const docMap = Object.fromEntries((docs ?? []).map((d: { id: string; title: string; source_type: string }) => [d.id, d]))
-
-          kbContext = fallbackChunks
-            .map((c: { content: string }, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 300)}`)
-            .join('\n\n')
-          kbSources = docIds.map(id => ({
-            title: docMap[id]?.title ?? 'Unknown',
-            source_type: docMap[id]?.source_type ?? 'unknown',
-            chunk_preview: fallbackChunks.find((c: { document_id: string }) => c.document_id === id)?.content?.slice(0, 80) ?? '',
-          }))
-          console.log('KB fallback:', fallbackChunks.length, 'chunks used')
+        const { data: fb } = await supabaseAdmin.from('kb_chunks').select('content, document_id').limit(6)
+        if (fb?.length) {
+          const docIds = [...new Set(fb.map((c: {document_id:string}) => c.document_id))]
+          const { data: docs } = await supabaseAdmin.from('kb_documents').select('id, title, source_type').in('id', docIds)
+          const docMap = Object.fromEntries((docs ?? []).map((d: {id:string;title:string;source_type:string}) => [d.id, d]))
+          kbContext = fb.map((c: {content:string}, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 300)}`).join('\n\n')
+          kbSources = docIds.map(id => ({ title: docMap[id]?.title ?? 'Unknown', source_type: docMap[id]?.source_type ?? 'unknown', chunk_preview: fb.find((c: {document_id:string}) => c.document_id === id)?.content?.slice(0, 80) ?? '' }))
+          console.log('KB fallback:', fb.length, 'chunks')
         }
       }
-    } catch (e) {
-      console.log('KB search error:', e instanceof Error ? e.message : e)
-    }
+    } catch (e) { console.log('KB error:', e) }
 
-    const patientProfile = `Name: ${patient.full_name} | Gender: ${patient.gender ?? 'N/A'} | Concern: ${patient.primary_concern ?? 'General health'} | History: ${patient.medical_history ?? 'None'}`
+    // ── STEP 1: Extract specific patient facts ────────────────
+    // This is the key step — pull exact facts before generating
+    console.log('Step 1: Extracting patient facts...')
+    const factsRes = await groq.chat.completions.create({
+      model: 'llama-3.1-8b-instant',
+      messages: [
+        { role: 'system', content: 'Extract specific clinical facts from the consultation. Return only a bullet list of specific, measurable, named facts. No generalisations. Only what is explicitly stated.' },
+        { role: 'user', content: `Patient: ${patient.full_name}, ${patient.gender ?? ''}, Concern: ${patient.primary_concern}
 
-    // ── Call 1: Overview ─────────────────────────────────────
+Gemini meeting notes:
+${geminiSnippet}
+
+Q&A:
+${fullQA || 'None'}
+
+Extract every specific fact mentioned:
+- Exact symptoms (with duration, frequency, severity)
+- Exact diet details (what they eat, when, how much)
+- Exact lifestyle (sleep times, work hours, exercise history)
+- Exact medical history (conditions, dates, medications, test results)
+- Exact measurements (weight, height, lab values)
+- Specific habits (good and bad)
+- What has worked or failed before
+
+Return as a bullet list. Every point must be specific and sourced from the data above. NO generalisations.` }
+      ],
+      temperature: 0.1,
+      max_tokens: 600,
+    })
+    const patientFacts = factsRes.choices[0]?.message?.content?.trim() ?? ''
+    console.log('Facts extracted:', patientFacts.slice(0, 200))
+
+    // ── STEP 2: Overview ─────────────────────────────────────
     const overviewRes = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [
-        { role: 'system', content: `You are the treating nutritionist at Clinic Living Plus, Bangalore. You are writing a personal letter directly to YOUR patient. 
-Rules:
-- Write entirely in second person: "you", "your" — never "the patient"
-- Use definitive language: "Your gut is inflamed" not "may be inflamed"
-- Reference their EXACT details from Q&A: their name, their specific symptoms, their actual diet, their real schedule
-- Every sentence must feel like you personally know this person and wrote this just for them
-- No hedging words: never use "may", "might", "could", "possibly", "likely"
-- Sound like a doctor who has studied this patient's case, not a generic health article` },
-        { role: 'user', content: `PATIENT: ${patientProfile}
+        { role: 'system', content: `You are ${patient.full_name}'s treating nutritionist at Clinic Living Plus. Write directly to her/him.
+STRICT RULES:
+- Every sentence MUST reference a specific fact from the PATIENT FACTS list below
+- Use exact details: their real food, their real symptoms, their real schedule
+- FORBIDDEN words: "may", "might", "could", "possibly", "often", "many people", "typically", "generally"
+- If you write something not in the facts list, delete it
+- Tone: warm, direct, like a doctor who knows them personally` },
+        { role: 'user', content: `PATIENT FACTS (use ONLY these):
+${patientFacts}
 
-Q&A (their exact words and details):
-${qaContext || 'None.'}
-
-SESSION NOTES:
-${sessionNotes || 'None.'}
+NUTRITIONIST INSTRUCTIONS:
+${roadmapInstructions || 'Focus on root cause healing based on their specific condition.'}
 
 KB CLINICAL KNOWLEDGE:
-${kbContext}
+${kbContext || 'Use clinical expertise.'}
 
-Write 2-3 paragraphs directly to ${patient.full_name} as their treating nutritionist.
-- Open by acknowledging their SPECIFIC situation using their real details from Q&A
-- Name their actual condition, their real symptoms, their actual lifestyle patterns
-- Tell them exactly what is happening in their body right now (from KB knowledge) and why
-- Tell them specifically what will change over ${duration_months} months: "By week 4, your energy will return. By month 2, your digestion will stabilize..."
-- Use their name at least once
-- Definitive, warm, authoritative. Like a doctor who truly knows them. Max 160 words.` }
+Write 2 paragraphs directly to ${patient.full_name}.
+Paragraph 1: Describe exactly what is happening in their body right now — using their specific symptoms, test results, eating patterns from the facts list.
+Paragraph 2: Tell them exactly what will change over ${duration_months} months — specific to their condition and goals.
+Use "you" throughout. Reference their real details. No generic health advice.` }
       ],
-      temperature: 0.6, max_tokens: 400,
+      temperature: 0.5,
+      max_tokens: 400,
     })
     const overview = overviewRes.choices[0]?.message?.content?.trim() ?? ''
 
-    // ── Call 2: Lifestyle guidelines ─────────────────────────
+    // ── STEP 3: Lifestyle guidelines ─────────────────────────
     const lifestyleRes = await groq.chat.completions.create({
       model: 'llama-3.1-8b-instant',
       messages: [
-        { role: 'system', content: 'You are the treating nutritionist writing a personal lifestyle prescription for YOUR patient. Write in second person only. Use their exact details. Be definitive — no hedging. Never say "the patient". Never mention KB.' },
-        { role: 'user', content: `PATIENT: ${patientProfile}
+        { role: 'system', content: 'Clinical nutritionist. Write 4 lifestyle prescriptions directly to the patient. Each must reference a specific fact from their consultation. No generic advice.' },
+        { role: 'user', content: `PATIENT FACTS:
+${patientFacts}
 
-Q&A (use their EXACT details):
-${qaContext || 'None.'}
+KB:
+${kbContext || 'Use expertise.'}
 
-KB KNOWLEDGE:
-${kbContext}
+Write 4 lifestyle changes for this specific patient.
+Each must:
+- Start with • 
+- Reference their actual habit/pattern (e.g. "Your habit of sleeping at 1am..." not "You should sleep earlier")
+- Give a specific, actionable change
+- Explain why in 1 sentence based on their condition
+- Be 20-25 words
 
-Write 4 lifestyle prescriptions directly to this patient using "you/your".
-Use their real details: if they sleep at 1am, address that. If they skip lunch, address that. If they stopped exercising in February, address that.
-Be specific and direct: "Your habit of eating dinner as your heaviest meal is disrupting your cortisol rhythm — shift your largest meal to lunch."
-
-Each point starts with • and is 20-25 words. Cover: sleep, movement, eating timing, stress.
-Return only 4 points. No hedging words.` }
+Return only 4 bullet points. No intro, no outro.` }
       ],
-      temperature: 0.4, max_tokens: 300,
+      temperature: 0.3,
+      max_tokens: 300,
     })
     const lifestyle_guidelines = lifestyleRes.choices[0]?.message?.content?.trim() ?? ''
 
-    // ── Call 3: Clinical notes ────────────────────────────────
+    // ── STEP 4: Clinical notes ────────────────────────────────
     const clinicalRes = await groq.chat.completions.create({
       model: 'llama-3.1-8b-instant',
       messages: [
-        { role: 'system', content: 'Clinical nutritionist writing notes for yourself. ONLY use KB and Q&A. Be specific and clinical.' },
-        { role: 'user', content: `PATIENT: ${patientProfile}
+        { role: 'system', content: 'Clinical nutritionist writing notes. Use only patient facts and KB. Be specific and clinical.' },
+        { role: 'user', content: `PATIENT FACTS:
+${patientFacts}
 
-Q&A:
-${qaContext || 'None.'}
+KB:
+${kbContext || 'Use expertise.'}
 
-KB CLINICAL KNOWLEDGE:
-${kbContext}
+Write 4 clinical notes:
+• Biomarkers: specific tests to track for this patient's exact condition with target ranges
+• Diet protocol: specific dietary intervention based on their actual eating patterns
+• Supplements: 2-3 specific supplements with exact doses, timing, and clinical reason for this patient
+• Red flags: specific warning signs to watch for given their history
 
-Write 4 precise clinical notes about this specific patient:
-• Biomarkers to track: list specific tests relevant to their condition with target ranges
-• Dietary protocol: their specific dietary intervention based on their current eating patterns from Q&A and KB protocols
-• Supplements: 2-3 specific supplements with exact doses, timing, and why for this patient's condition
-• Watch for: specific red flags or contraindications relevant to their history
-
-Each starts with •. Use their real details. Clinical and precise. Return only 4 points.` }
+Each starts with •. Specific to this patient. No generic statements.` }
       ],
-      temperature: 0.3, max_tokens: 400,
+      temperature: 0.2,
+      max_tokens: 400,
     })
     const nutritionist_guidelines = clinicalRes.choices[0]?.message?.content?.trim() ?? ''
 
-    // ── Call 4: Weekly schedule — cause + action format ───────
-    const totalWeeks = duration_months * 4
+    // ── STEP 5: Weekly schedule ───────────────────────────────
+    // Handle short durations: 0.25 = 1 week, 0.5 = 2 weeks
+    const totalWeeks = duration_months < 1
+      ? Math.round(duration_months * 4)
+      : duration_months * 4
     const weeklyRes = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [
-        { role: 'system', content: 'Return only a valid JSON array. No markdown, no code fences. Write cause and actions directly to the patient in second person. No hedging words. Never mention KB or knowledge base. Sound like a doctor who knows this patient personally.' },
-        { role: 'user', content: `PATIENT: ${patientProfile}
-
-FULL Q&A FROM CONSULTATION:
-${qaContext || 'None.'}
+        { role: 'system', content: 'Return only a valid JSON array. No markdown. Write cause and actions directly to the patient using their specific facts. Never write generic health advice.' },
+        { role: 'user', content: `PATIENT FACTS (the only source of truth — use these specific details):
+${patientFacts}
 
 KB CLINICAL KNOWLEDGE:
-${kbContext}
+${kbContext || 'Use expertise.'}
 
-Create exactly ${totalWeeks} weekly plans as a JSON array written directly to this patient.
+NUTRITIONIST INSTRUCTIONS:
+${roadmapInstructions || `Weeks 1-${Math.ceil(totalWeeks/3)}: address root causes from facts. Weeks ${Math.ceil(totalWeeks/3)+1}-${Math.ceil(totalWeeks*2/3)}: build on improvements. Weeks ${Math.ceil(totalWeeks*2/3)+1}-${totalWeeks}: optimise and sustain.`}
+
+Create exactly ${totalWeeks} weekly plans.
 
 RULES:
-- cause: Write in second person to the patient. Name their SPECIFIC symptoms from Q&A. Be definitive — no "may", "might", "could". Example: "Your long-standing constipation has created chronic gut inflammation that is directly suppressing your metabolism and causing the fatigue you wake up with every day."
-- actions: Write as direct prescriptions. Specific and actionable. Reference their real situation. Example: "Wake up 30 minutes earlier than your usual 8:30am and drink warm water before your morning tea and paratha."
-- Never say "the patient", never mention "KB" or "knowledge base"
-- Each week tackles a distinct root cause building on the previous week
+- cause: Must reference a SPECIFIC fact from the patient's data. Say "Your [specific symptom/habit] is causing [specific effect]" — not "Gut inflammation can cause weight gain"
+- actions: Must be specific to this patient's life. Reference their real food, real schedule, real habits. "Replace your morning paratha with..." not "Eat healthier in the morning"
+- Each week must feel written for THIS patient, not for anyone with this condition
+- Never use: "many people", "typically", "often", "may", "might", "could"
 
 [{
   "week_number": 1,
-  "focus_theme": "Specific theme for this patient's condition",
-  "cause": "2-3 sentences directly to this patient explaining what is happening in their body right now and why, referencing their specific symptoms.",
+  "focus_theme": "Specific theme tied to their condition",
+  "cause": "2 sentences directly to patient using their specific facts. Name their real symptom and explain the exact mechanism.",
   "actions": [
-    "Specific direct action for them — 12-18 words",
-    "Another specific action tied to their real situation",
-    "Third action — concrete and measurable"
+    "Specific action referencing their real life — 12-18 words",
+    "Another action from their specific situation",
+    "Third action tied to their exact habits or schedule"
   ]
 }]
 
-Exactly ${totalWeeks} items. week_number 1 to ${totalWeeks}. Progression: weeks 1-4 gut/foundation, weeks 5-8 metabolism/energy, weeks 9+ optimization.`
-        }
+Exactly ${totalWeeks} items.` }
       ],
-      temperature: 0.3, max_tokens: 2500,
+      temperature: 0.3,
+      max_tokens: 2500,
     })
 
     const weeklyRaw = weeklyRes.choices[0]?.message?.content ?? ''
@@ -246,11 +226,12 @@ Exactly ${totalWeeks} items. week_number 1 to ${totalWeeks}. Progression: weeks 
     try {
       weeklySchedule = extractJSON(weeklyRaw) as unknown[]
       if (!Array.isArray(weeklySchedule)) throw new Error('Not an array')
-      console.log('Weeks generated:', weeklySchedule.length)
+      console.log('Weeks:', weeklySchedule.length)
     } catch {
       return NextResponse.json({ error: `Weekly parse failed. Raw: ${weeklyRaw.slice(0, 300)}` }, { status: 500 })
     }
 
+    // ── Save ─────────────────────────────────────────────────
     const { data: roadmap, error: roadmapError } = await supabaseAdmin
       .from('roadmaps')
       .insert({ session_id, patient_id, overview, lifestyle_guidelines, nutritionist_guidelines, weekly_schedule: weeklySchedule, kb_sources: kbSources, duration_months, status: 'draft' })
