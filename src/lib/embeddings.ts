@@ -50,7 +50,15 @@ export async function embedText(text: string): Promise<number[] | null> {
 
 // Aliases for backwards compatibility with kb/route.ts and kb/search/route.ts
 export const getEmbedding = embedText
-export const getEmbeddings = embedText
+
+export async function getEmbeddings(texts: string[]): Promise<number[][]> {
+  const results: number[][] = []
+  for (const text of texts) {
+    const embedding = await embedText(text)
+    if (embedding) results.push(embedding)
+  }
+  return results
+}
 
 export function chunkText(text: string, chunkSize = 500, overlap = 50): string[] {
   const words = text.split(/\s+/)
