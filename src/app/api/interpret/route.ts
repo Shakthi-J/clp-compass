@@ -41,10 +41,24 @@ export async function POST(req: NextRequest) {
       const keywords = [...new Set(rawText.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w)).slice(0, 10))].join(' | ')
       console.log('KB keywords:', keywords)
 
-      const { data: chunks } = await supabaseAdmin
-        .from('kb_chunks').select('content, document_id')
-        .textSearch('content', keywords, { type: 'websearch', config: 'english' })
-        .limit(8)
+      // Search per keyword to get chunks from DIFFERENT books
+      const keywordList = keywords.split(' | ').filter(Boolean)
+      const allChunks: {content: string; document_id: string}[] = []
+
+      for (const kw of keywordList.slice(0, 6)) {
+        const { data: kwChunks } = await supabaseAdmin
+          .from('kb_chunks').select('content, document_id')
+          .textSearch('content', kw, { type: 'websearch', config: 'english' })
+          .limit(3)
+        if (kwChunks?.length) {
+          for (const chunk of kwChunks) {
+            const docChunkCount = allChunks.filter((c: {document_id:string}) => c.document_id === chunk.document_id).length
+            if (docChunkCount < 2) allChunks.push(chunk)
+          }
+        }
+      }
+
+      const chunks = allChunks.slice(0, 10)
 
       if (chunks?.length) {
         const docIds = [...new Set(chunks.map((c: {document_id:string}) => c.document_id))]
@@ -52,7 +66,7 @@ export async function POST(req: NextRequest) {
         const docMap = Object.fromEntries((docs ?? []).map((d: {id:string;title:string;source_type:string}) => [d.id, d]))
         kbContext = chunks.map((c: {content:string}, i: number) => `[KB ${i+1}]: ${c.content.slice(0, 350)}`).join('\n\n')
         kbSources = docIds.map(id => ({ title: docMap[id]?.title ?? 'Unknown', source_type: docMap[id]?.source_type ?? 'unknown', chunk_preview: chunks.find((c: {document_id:string}) => c.document_id === id)?.content?.slice(0, 80) ?? '' }))
-        console.log('KB chunks:', chunks.length, 'from docs:', kbSources.map(s => s.title).join(', '))
+        console.log('KB chunks:', chunks.length, 'from', docIds.length, 'books:', kbSources.map(s => s.title.split('(')[0].trim()).join(', '))
       } else {
         const { data: fb } = await supabaseAdmin.from('kb_chunks').select('content, document_id').limit(6)
         if (fb?.length) {

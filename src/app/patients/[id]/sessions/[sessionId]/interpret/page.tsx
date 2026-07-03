@@ -184,21 +184,7 @@ export default function InterpretPage() {
             <div style={{ fontSize: 14, lineHeight: 1.85, whiteSpace: 'pre-wrap', color: 'rgba(255,255,255,0.92)' }}>{roadmap.overview}</div>
           </div>
 
-          {/* KB Sources */}
-          {roadmap.kb_sources?.length > 0 && (
-            <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #e5e7eb', padding: '14px 18px', marginBottom: 20 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#538A22', textTransform: 'uppercase' as const, letterSpacing: '0.08em', marginBottom: 10 }}>
-                ✅ Generated from {roadmap.kb_sources.length} Knowledge Base source{roadmap.kb_sources.length > 1 ? 's' : ''}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {roadmap.kb_sources.map((s, i) => (
-                  <div key={i} style={{ fontSize: 12, background: '#F2F9EC', color: '#3a6118', padding: '4px 12px', borderRadius: 20, fontWeight: 500 }}>
-                    {s.source_type === 'book' ? '📚' : s.source_type === 'podcast' ? '🎙️' : '📋'} {s.title}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+       
 
           {/* Weekly preview — compact */}
           <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>

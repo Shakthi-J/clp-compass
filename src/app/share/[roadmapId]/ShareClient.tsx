@@ -270,13 +270,7 @@ export default function ShareClient({ roadmap }: { roadmap: Roadmap }) {
           )
         })}
 
-        {/* Disclaimer */}
-        <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '16px 20px', marginTop: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 4 }}>⚠️ Medical disclaimer</div>
-          <div style={{ fontSize: 12, color: '#78350f', lineHeight: 1.7 }}>
-            This roadmap is prepared by a qualified nutritionist at Clinic Living Plus based on your personal consultation. It is not a substitute for medical diagnosis or treatment. Please consult your doctor before making significant changes, especially if you are on medication.
-          </div>
-        </div>
+        
 
         {/* Footer */}
         <div style={{ marginTop: 20, textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>
