@@ -7,6 +7,7 @@ type WeeklyPlan = {
   focus_theme: string
   cause: string
   actions: string[]
+  milestone?: string
 }
 
 type Roadmap = {
@@ -158,6 +159,17 @@ export default function ShareClient({ roadmap }: { roadmap: Roadmap }) {
           <div style={{ fontSize: 14, lineHeight: 1.9, color: 'rgba(255,255,255,0.88)', whiteSpace: 'pre-wrap' }}>{roadmap.overview}</div>
         </div>
 
+        {/* Lifestyle + Clinical */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 24 }}>
+          <div style={{ background: '#F2F9EC', borderRadius: 12, padding: '18px 20px', border: '1px solid #C8E9A8' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#538A22', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>🌿 Lifestyle prescription</div>
+            <div style={{ fontSize: 13, color: '#374151', lineHeight: 2, whiteSpace: 'pre-wrap' }}>{roadmap.lifestyle_guidelines}</div>
+          </div>
+          <div style={{ background: '#f8fafc', borderRadius: 12, padding: '18px 20px', border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10 }}>🩺 Clinical notes</div>
+            <div style={{ fontSize: 13, color: '#374151', lineHeight: 2, whiteSpace: 'pre-wrap' }}>{roadmap.nutritionist_guidelines}</div>
+          </div>
+        </div>
 
         {/* WEEKLY ROADMAP — checklist style */}
         <div style={{ marginBottom: 12 }}>
@@ -261,6 +273,16 @@ export default function ShareClient({ roadmap }: { roadmap: Roadmap }) {
                             )
                           })}
                         </div>
+
+                        {/* Milestone */}
+                        {week.milestone && (
+                          <div style={{ margin: '12px 0 4px', padding: '12px 14px', background: `linear-gradient(135deg, ${color}15, ${color}08)`, borderRadius: 10, border: `1px solid ${color}30` }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color, textTransform: 'uppercase' as const, letterSpacing: '0.08em', marginBottom: 5 }}>
+                              🎯 By end of this week you should notice
+                            </div>
+                            <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.6, fontWeight: 500 }}>{week.milestone}</div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )
@@ -270,7 +292,13 @@ export default function ShareClient({ roadmap }: { roadmap: Roadmap }) {
           )
         })}
 
-        
+        {/* Disclaimer */}
+        <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '16px 20px', marginTop: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 4 }}>⚠️ Medical disclaimer</div>
+          <div style={{ fontSize: 12, color: '#78350f', lineHeight: 1.7 }}>
+            This roadmap is prepared by a qualified nutritionist at Clinic Living Plus based on your personal consultation. It is not a substitute for medical diagnosis or treatment. Please consult your doctor before making significant changes, especially if you are on medication.
+          </div>
+        </div>
 
         {/* Footer */}
         <div style={{ marginTop: 20, textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>

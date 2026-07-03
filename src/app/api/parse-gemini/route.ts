@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+
+export const dynamic = 'force-dynamic'
 import { supabaseAdmin } from '@/lib/supabase'
 import Groq from 'groq-sdk'
 
@@ -13,7 +15,7 @@ export async function POST(req: NextRequest) {
 
     // ── Extract structured data from Gemini doc ───────────────
     const extractRes = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'llama-3.1-8b-instant',
       messages: [
         {
           role: 'system',

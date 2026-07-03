@@ -139,20 +139,20 @@ export default function NewSessionPage() {
           />
         </div>
 
-        {/* Gemini doc */}
-<div style={{ marginBottom: 20 }}>
-  <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>
-    Gemini Meeting Document <span style={{ fontSize: 11, fontWeight: 400, color: '#538A22', marginLeft: 8 }}>← paste to auto-extract everything</span>
-  </label>
-  <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>Copy from your Google Meet Gemini notes — AI extracts patient profile, symptoms, diet, habits and generates Q&A automatically</p>
-  <textarea
-    value={geminiDoc}
-    onChange={e => setGeminiDoc(e.target.value)}
-    rows={10}
-    placeholder="Paste the full Gemini meeting document here..."
-    style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '2px solid #C8E9A8', fontSize: 13, resize: 'vertical', background: '#fafff8' }}
-  />
-</div>
+        {/* Gemini doc — collapsible for first session, prominent for follow-up */}
+        <div style={{ marginBottom: 20 }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>
+              Gemini Meeting Document <span style={{ fontSize: 11, fontWeight: 400, color: '#538A22', marginLeft: 8 }}>← paste to auto-extract everything</span>
+            </label>
+            <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>Copy from your Google Meet Gemini notes — AI extracts patient profile, symptoms, diet, habits and generates Q&A automatically</p>
+            <textarea
+              value={geminiDoc}
+              onChange={e => setGeminiDoc(e.target.value)}
+              rows={10}
+              placeholder="Paste the full Gemini meeting document here..."
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '2px solid #C8E9A8', fontSize: 13, resize: 'vertical', background: '#fafff8' }}
+            />
+        </div>
 
         {/* Status messages */}
         {parsing && (

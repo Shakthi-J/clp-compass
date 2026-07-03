@@ -9,6 +9,7 @@ type WeeklyPlan = {
   focus_theme: string
   cause: string
   actions: string[]
+  milestone?: string
 }
 
 type KbSource = { title: string; source_type: string; chunk_preview: string }
@@ -184,30 +185,62 @@ export default function InterpretPage() {
             <div style={{ fontSize: 14, lineHeight: 1.85, whiteSpace: 'pre-wrap', color: 'rgba(255,255,255,0.92)' }}>{roadmap.overview}</div>
           </div>
 
-       
-
-          {/* Weekly preview — compact */}
-          <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: '#111827' }}>
-                {roadmap.weekly_schedule?.length} Week Roadmap Preview
+          {/* KB Sources */}
+          {roadmap.kb_sources?.length > 0 && (
+            <div style={{ background: '#fff', borderRadius: 10, border: '1px solid #e5e7eb', padding: '14px 18px', marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#538A22', textTransform: 'uppercase' as const, letterSpacing: '0.08em', marginBottom: 10 }}>
+                ✅ Generated from {roadmap.kb_sources.length} Knowledge Base source{roadmap.kb_sources.length > 1 ? 's' : ''}
               </div>
-              <div style={{ fontSize: 12, color: '#6b7280' }}>Share with patient for the full checklist version</div>
-            </div>
-            <div style={{ padding: '16px 20px' }}>
-              {roadmap.weekly_schedule?.map((week) => (
-                <div key={week.week_number} style={{ display: 'flex', gap: 14, marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f9f9f9' }}>
-                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#F2F9EC', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#538A22', flexShrink: 0 }}>
-                    {week.week_number}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {roadmap.kb_sources.map((s, i) => (
+                  <div key={i} style={{ fontSize: 12, background: '#F2F9EC', color: '#3a6118', padding: '4px 12px', borderRadius: 20, fontWeight: 500 }}>
+                    {s.source_type === 'book' ? '📚' : s.source_type === 'podcast' ? '🎙️' : '📋'} {s.title}
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, color: '#111827', marginBottom: 3 }}>Week {week.week_number} — {week.focus_theme}</div>
-                    <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.5, marginBottom: 6 }}>{week.cause?.slice(0, 120)}...</div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {(week.actions ?? []).map((a, i) => (
-                        <span key={i} style={{ fontSize: 11, background: '#f3f4f6', color: '#374151', padding: '2px 8px', borderRadius: 4 }}>› {a.slice(0, 40)}{a.length > 40 ? '...' : ''}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Full week cards — coach view */}
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', marginBottom: 16 }}>
+              {roadmap.weekly_schedule?.length}-Week Action Plan
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {roadmap.weekly_schedule?.map((week) => (
+                <div key={week.week_number} style={{ background: '#fff', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                  {/* Week header */}
+                  <div style={{ background: 'linear-gradient(135deg, #538A22, #3a6118)', padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: 15, flexShrink: 0 }}>
+                      {week.week_number}
+                    </div>
+                    <div>
+                      <div style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>Week {week.week_number}</div>
+                      <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12 }}>{week.focus_theme}</div>
+                    </div>
+                  </div>
+                  {/* Root cause */}
+                  <div style={{ padding: '12px 18px', borderBottom: '1px solid #f3f4f6', background: '#fafafa' }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase' as const, letterSpacing: '0.06em', marginBottom: 5 }}>🔍 Root Cause</div>
+                    <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.65, fontStyle: 'italic' }}>{week.cause}</div>
+                  </div>
+                  {/* Actions checklist */}
+                  <div style={{ padding: '12px 18px' }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#538A22', textTransform: 'uppercase' as const, letterSpacing: '0.06em', marginBottom: 10 }}>✨ Actions</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {(week.actions ?? []).map((action, i) => (
+                        <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 10px', background: '#f9fafb', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+                          <div style={{ width: 20, height: 20, borderRadius: 4, border: '2px solid #d1d5db', flexShrink: 0, marginTop: 1 }} />
+                          <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.5 }}>{action}</div>
+                        </div>
                       ))}
                     </div>
+                    {week.milestone && (
+                      <div style={{ marginTop: 12, padding: '10px 14px', background: 'linear-gradient(135deg, #F2F9EC, #e8f5e0)', borderRadius: 8, border: '1px solid #C8E9A8' }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: '#538A22', textTransform: 'uppercase' as const, letterSpacing: '0.08em', marginBottom: 4 }}>🎯 Expected outcome this week</div>
+                        <div style={{ fontSize: 13, color: '#374151', lineHeight: 1.6 }}>{week.milestone}</div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

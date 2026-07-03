@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+
+export const dynamic = 'force-dynamic'
 import { supabaseAdmin } from '@/lib/supabase'
 import Groq from 'groq-sdk'
 import { embedText } from '@/lib/embeddings'
@@ -296,7 +298,8 @@ RULES FOR ACTIONS:
     "Specific measurable action with exact quantity/timing — why it works in one sentence",
     "Second specific action with quantity and timing — scientific rationale",
     "Third specific action tied to their actual daily schedule"
-  ]
+  ],
+  "milestone": "By end of this week, if you follow all actions: [1-2 specific, measurable changes the patient will notice — e.g. bloating reduces, energy improves by afternoon, bowel movement becomes regular]. Be specific and realistic."
 }]
 
 Exactly ${totalWeeks} items. Each week must address a different physiological system or mechanism. Progression: weeks 1-2 eliminate triggers, weeks 3-4 repair damage, weeks 5+ rebuild and optimise.\`` }
