@@ -47,3 +47,17 @@ export async function embedText(text: string): Promise<number[] | null> {
     return null
   }
 }
+
+// Aliases for backwards compatibility with kb/route.ts and kb/search/route.ts
+export const getEmbedding = embedText
+export const getEmbeddings = embedText
+
+export function chunkText(text: string, chunkSize = 500, overlap = 50): string[] {
+  const words = text.split(/\s+/)
+  const chunks: string[] = []
+  for (let i = 0; i < words.length; i += chunkSize - overlap) {
+    chunks.push(words.slice(i, i + chunkSize).join(' '))
+    if (i + chunkSize >= words.length) break
+  }
+  return chunks
+}
