@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import Groq from 'groq-sdk'
+import { embedText } from '@/lib/embeddings'
 
 export const maxDuration = 60
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
@@ -41,24 +42,86 @@ export async function POST(req: NextRequest) {
       const keywords = [...new Set(rawText.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w => w.length > 3 && !stopWords.has(w)).slice(0, 10))].join(' | ')
       console.log('KB keywords:', keywords)
 
-      // Search per keyword to get chunks from DIFFERENT books
-      const keywordList = keywords.split(' | ').filter(Boolean)
-      const allChunks: {content: string; document_id: string}[] = []
+          // Build query for embedding — use clinical terms from patient data
+      const queryText = [
+        patient.primary_concern ?? '',
+        patient.medical_history ?? '',
+        ...qaPairs.slice(0, 5).map(qa => `${qa.question} ${qa.answer}`)
+      ].filter(Boolean).join(' ').slice(0, 512)
 
-      for (const kw of keywordList.slice(0, 6)) {
-        const { data: kwChunks } = await supabaseAdmin
-          .from('kb_chunks').select('content, document_id')
-          .textSearch('content', kw, { type: 'websearch', config: 'english' })
-          .limit(3)
-        if (kwChunks?.length) {
-          for (const chunk of kwChunks) {
-            const docChunkCount = allChunks.filter((c: {document_id:string}) => c.document_id === chunk.document_id).length
-            if (docChunkCount < 2) allChunks.push(chunk)
+      console.log('KB query:', queryText.slice(0, 100))
+
+      let chunks: {content: string; document_id: string}[] = []
+      let usedVectorSearch = false
+
+      // ── Try vector search first ──────────────────────────
+      const queryEmbedding = await embedText(queryText)
+
+      if (queryEmbedding && queryEmbedding.length === 384) {
+        console.log('Using vector search (pgvector)')
+        const { data: vectorChunks, error: vecError } = await supabaseAdmin
+          .rpc('match_kb_chunks', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.25,
+            match_count: 12,
+          })
+
+        if (!vecError && vectorChunks?.length > 0) {
+          // Limit to 2 chunks per document for diversity
+          const seen: Record<string, number> = {}
+          for (const chunk of vectorChunks) {
+            const docCount = seen[chunk.document_id] ?? 0
+            if (docCount < 2) {
+              chunks.push({ content: chunk.content, document_id: chunk.document_id })
+              seen[chunk.document_id] = docCount + 1
+            }
           }
+          usedVectorSearch = true
+          console.log('Vector search:', chunks.length, 'chunks, top similarity:', vectorChunks[0]?.similarity?.toFixed(3))
+        } else {
+          console.log('Vector search returned nothing:', vecError?.message)
         }
       }
 
-      const chunks = allChunks.slice(0, 10)
+      // ── Fallback: keyword search per medical term ────────
+      if (!usedVectorSearch || chunks.length < 4) {
+        console.log('Using text search fallback')
+        const medicalTermMap: Record<string, string[]> = {
+          'pcos': ['polycystic', 'ovarian', 'insulin', 'menstrual', 'testosterone'],
+          'thyroid': ['thyroid', 'hypothyroid', 'hashimoto', 'iodine'],
+          'gut': ['microbiome', 'intestinal', 'constipation', 'probiotic', 'digestive'],
+          'inflammation': ['inflammation', 'inflammatory', 'anti-inflammatory', 'cytokine'],
+          'weight': ['obesity', 'metabolism', 'adipose', 'insulin resistance'],
+          'diabetes': ['glucose', 'insulin', 'glycemic', 'blood sugar'],
+          'fatigue': ['fatigue', 'adrenal', 'mitochondria', 'energy'],
+          'sleep': ['circadian', 'melatonin', 'cortisol', 'insomnia'],
+          'hormone': ['estrogen', 'progesterone', 'cortisol', 'endocrine'],
+        }
+
+        const patientText = queryText.toLowerCase()
+        const searchTerms = new Set<string>()
+
+        keywords.split(' | ').filter(Boolean).forEach((k: string) => searchTerms.add(k))
+        for (const [trigger, synonyms] of Object.entries(medicalTermMap)) {
+          if (patientText.includes(trigger)) synonyms.forEach(s => searchTerms.add(s))
+        }
+
+        const textChunks: {content: string; document_id: string}[] = [...chunks]
+        for (const kw of [...searchTerms].slice(0, 8)) {
+          const { data: kwChunks } = await supabaseAdmin
+            .from('kb_chunks').select('content, document_id')
+            .textSearch('content', kw, { type: 'websearch', config: 'english' })
+            .limit(2)
+          if (kwChunks?.length) {
+            for (const chunk of kwChunks) {
+              const alreadyIn = textChunks.some(c => c.content === chunk.content)
+              const docCount = textChunks.filter(c => c.document_id === chunk.document_id).length
+              if (!alreadyIn && docCount < 2) textChunks.push(chunk)
+            }
+          }
+        }
+        chunks = textChunks.slice(0, 12)
+      }
 
       if (chunks?.length) {
         const docIds = [...new Set(chunks.map((c: {document_id:string}) => c.document_id))]
@@ -212,24 +275,31 @@ ${roadmapInstructions || `Weeks 1-${Math.ceil(totalWeeks/3)}: address root cause
 
 Create exactly ${totalWeeks} weekly plans.
 
-RULES:
-- cause: Must reference a SPECIFIC fact from the patient's data. Say "Your [specific symptom/habit] is causing [specific effect]" — not "Gut inflammation can cause weight gain"
-- actions: Must be specific to this patient's life. Reference their real food, real schedule, real habits. "Replace your morning paratha with..." not "Eat healthier in the morning"
-- Each week must feel written for THIS patient, not for anyone with this condition
-- Never use: "many people", "typically", "often", "may", "might", "could"
+RULES FOR CAUSE:
+- Explain the BIOCHEMICAL MECHANISM — what is actually happening in the body at a cellular/hormonal level
+- E.g. "Your elevated cortisol from 10-12hr workdays is suppressing progesterone production, which explains your irregular cycle. Cortisol and progesterone compete for the same receptor sites — when cortisol dominates, progesterone cannot bind, disrupting your luteal phase."
+- Be scientific. Use medical terms but explain them. Reference their actual symptoms.
+- Never say "may", "might", "could", "typically"
+
+RULES FOR ACTIONS:
+- Each action must be SPECIFIC and MEASURABLE: include exact quantities, timings, durations
+- E.g. "Eat 2 tablespoons of ground flaxseed in warm water at 7am daily — lignans in flaxseed bind excess oestrogen and support progesterone balance"
+- Include the WHY in one sentence after the action
+- Reference their actual food/schedule from Q&A and patient facts
+- Actions should NOT suggest "consult a doctor" or "consult a nutritionist" — she is already at CLP
 
 [{
   "week_number": 1,
-  "focus_theme": "Specific theme tied to their condition",
-  "cause": "2 sentences directly to patient using their specific facts. Name their real symptom and explain the exact mechanism.",
+  "focus_theme": "Specific clinical theme",
+  "cause": "3 sentences explaining the exact biochemical mechanism happening in their body. Scientific, specific to their condition and facts. Direct to patient.",
   "actions": [
-    "Specific action referencing their real life — 12-18 words",
-    "Another action from their specific situation",
-    "Third action tied to their exact habits or schedule"
+    "Specific measurable action with exact quantity/timing — why it works in one sentence",
+    "Second specific action with quantity and timing — scientific rationale",
+    "Third specific action tied to their actual daily schedule"
   ]
 }]
 
-Exactly ${totalWeeks} items.` }
+Exactly ${totalWeeks} items. Each week must address a different physiological system or mechanism. Progression: weeks 1-2 eliminate triggers, weeks 3-4 repair damage, weeks 5+ rebuild and optimise.\`` }
       ],
       temperature: 0.3,
       max_tokens: 2500,

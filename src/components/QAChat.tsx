@@ -232,7 +232,7 @@ export default function QAChat({
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#3a6118' }}>All questions answered · Ready to generate roadmap</div>
               </div>
             )}
-            {qa.length >= 5 && !done && (
+            {qa.length >= 500 && !done && (
               <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#92400e', marginTop: 10 }}>
                 💡 Enough data to generate roadmap now, or keep answering for better results.
               </div>
