@@ -86,7 +86,7 @@ export default function NewSessionPage() {
         </h1>
         <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
           {isFirstSession
-            ? 'You\'ll be taken to the Q&A intake right after saving.'
+            ? 'Paste the Gemini meeting doc — AI will extract everything automatically.'
             : 'Add session notes or paste the Gemini doc from your meeting.'
           }
         </p>
@@ -95,8 +95,8 @@ export default function NewSessionPage() {
       {/* Flow steps */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24 }}>
         {(isFirstSession
-          ? ['Start Session', 'Q&A Intake', 'Generate Roadmap']
-          : ['Add Session', 'Update Q&A', 'Update Roadmap']
+          ? ['Start Session', 'Paste Gemini Doc', 'Generate Roadmap']
+          : ['Add Session', 'Paste Gemini Doc', 'Update Roadmap']
         ).map((step, i, arr) => (
           <div key={step} style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -139,40 +139,20 @@ export default function NewSessionPage() {
           />
         </div>
 
-        {/* Gemini doc — collapsible for first session, prominent for follow-up */}
-        {isFirstSession ? (
-          <div style={{ marginBottom: 20 }}>
-            <button type="button" onClick={() => setShowGemini(g => !g)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-              {showGemini ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              Already have a Gemini meeting doc? Add it here
-            </button>
-            {showGemini && (
-              <textarea
-                value={geminiDoc}
-                onChange={e => setGeminiDoc(e.target.value)}
-                rows={6}
-                placeholder="Paste Gemini meeting document..."
-                style={{ width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, resize: 'vertical' }}
-              />
-            )}
-          </div>
-        ) : (
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>
-              Gemini Meeting Document
-              <span style={{ fontSize: 11, fontWeight: 400, color: '#538A22', marginLeft: 8 }}>← paste to auto-extract</span>
-            </label>
-            <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>Copy from your Google Meet Gemini notes — AI will extract Q&A and update the patient profile</p>
-            <textarea
-              value={geminiDoc}
-              onChange={e => setGeminiDoc(e.target.value)}
-              rows={8}
-              placeholder="Paste the Gemini meeting document here..."
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '2px solid #C8E9A8', fontSize: 13, resize: 'vertical', background: '#fafff8' }}
-            />
-          </div>
-        )}
+        {/* Gemini doc */}
+<div style={{ marginBottom: 20 }}>
+  <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>
+    Gemini Meeting Document <span style={{ fontSize: 11, fontWeight: 400, color: '#538A22', marginLeft: 8 }}>← paste to auto-extract everything</span>
+  </label>
+  <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>Copy from your Google Meet Gemini notes — AI extracts patient profile, symptoms, diet, habits and generates Q&A automatically</p>
+  <textarea
+    value={geminiDoc}
+    onChange={e => setGeminiDoc(e.target.value)}
+    rows={10}
+    placeholder="Paste the full Gemini meeting document here..."
+    style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '2px solid #C8E9A8', fontSize: 13, resize: 'vertical', background: '#fafff8' }}
+  />
+</div>
 
         {/* Status messages */}
         {parsing && (
@@ -192,7 +172,7 @@ export default function NewSessionPage() {
 
         <button type="submit" disabled={loading}
           style={{ width: '100%', padding: '12px', background: '#538A22', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
-          {loading ? 'Saving...' : isFirstSession ? 'Start Session → Go to Q&A' : 'Save Session → Update Q&A'}
+          {loading ? 'Saving...' : isFirstSession ? 'Save & Extract from Gemini Doc' : 'Save & Extract from Gemini Doc'}
         </button>
       </form>
 
