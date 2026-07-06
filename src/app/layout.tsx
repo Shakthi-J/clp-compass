@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Script from 'next/script'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -10,6 +11,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
+        {/* Google Identity Services (OAuth token popup) + gapi (Picker module).
+            Loaded once, globally, for the "Import from Drive" feature.
+            strategy="afterInteractive" so they don't block first paint. */}
+        <Script src="https://accounts.google.com/gsi/client" strategy="afterInteractive" />
+        <Script src="https://apis.google.com/js/api.js" strategy="afterInteractive" />
+
         {/* Top header */}
         <header style={{ background: '#fff', borderBottom: '1px solid #e5e7eb', padding: '0 32px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 50 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

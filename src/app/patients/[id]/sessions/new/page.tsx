@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { ArrowLeft, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 import Link from 'next/link'
+import ImportFromDrive from '@/components/ImportFromDrive'
 
 export default function NewSessionPage() {
   const router = useRouter()
@@ -18,6 +19,8 @@ export default function NewSessionPage() {
   const [parsing, setParsing] = useState(false)
   const [parsed, setParsed] = useState<{ qa_count: number } | null>(null)
   const [sessionCount, setSessionCount] = useState(0)
+  const [importError, setImportError] = useState('')
+  const [importedFileName, setImportedFileName] = useState('')
 
   // Check if this patient has existing sessions
   useEffect(() => {
@@ -54,7 +57,7 @@ export default function NewSessionPage() {
 
       const sessionId = sessionJson.id
 
-      // Auto-parse Gemini doc if pasted
+      // Auto-parse Gemini doc if pasted or imported from Drive
       if (geminiDoc.trim().length > 100) {
         setParsing(true)
         const parseRes = await fetch('/api/parse-gemini', {
@@ -86,8 +89,8 @@ export default function NewSessionPage() {
         </h1>
         <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
           {isFirstSession
-            ? 'Paste the Gemini meeting doc — AI will extract everything automatically.'
-            : 'Add session notes or paste the Gemini doc from your meeting.'
+            ? 'Import the transcript from Drive, or paste the Gemini meeting doc — AI will extract everything automatically.'
+            : 'Add session notes, then import from Drive or paste the Gemini doc from your meeting.'
           }
         </p>
       </div>
@@ -95,8 +98,8 @@ export default function NewSessionPage() {
       {/* Flow steps */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24 }}>
         {(isFirstSession
-          ? ['Start Session', 'Paste Gemini Doc', 'Generate Roadmap']
-          : ['Add Session', 'Paste Gemini Doc', 'Update Roadmap']
+          ? ['Start Session', 'Import / Paste Transcript', 'Generate Roadmap']
+          : ['Add Session', 'Import / Paste Transcript', 'Update Roadmap']
         ).map((step, i, arr) => (
           <div key={step} style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -139,17 +142,39 @@ export default function NewSessionPage() {
           />
         </div>
 
-        {/* Gemini doc — collapsible for first session, prominent for follow-up */}
+        {/* Gemini doc — import from Drive or paste manually */}
         <div style={{ marginBottom: 20 }}>
             <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>
-              Gemini Meeting Document <span style={{ fontSize: 11, fontWeight: 400, color: '#538A22', marginLeft: 8 }}>← paste to auto-extract everything</span>
+              Meeting Transcript <span style={{ fontSize: 11, fontWeight: 400, color: '#538A22', marginLeft: 8 }}>← import or paste to auto-extract everything</span>
             </label>
-            <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>Copy from your Google Meet Gemini notes — AI extracts patient profile, symptoms, diet, habits and generates Q&A automatically</p>
+            <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 10 }}>
+              Import the transcript Doc Google Meet saved to Drive, or paste your Gemini meeting notes — AI extracts patient profile, symptoms, diet, habits and generates Q&A automatically
+            </p>
+
+            <div style={{ marginBottom: 10 }}>
+              <ImportFromDrive
+                onImport={(text, fileName) => {
+                  setGeminiDoc(text)
+                  setImportedFileName(fileName)
+                  setImportError('')
+                }}
+                onError={(msg) => setImportError(msg)}
+              />
+              {importedFileName && !importError && (
+                <span style={{ marginLeft: 10, fontSize: 12, color: '#538A22', fontWeight: 600 }}>
+                  ✓ Imported "{importedFileName}"
+                </span>
+              )}
+              {importError && (
+                <p style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{importError}</p>
+              )}
+            </div>
+
             <textarea
               value={geminiDoc}
               onChange={e => setGeminiDoc(e.target.value)}
               rows={10}
-              placeholder="Paste the full Gemini meeting document here..."
+              placeholder="...or paste the full transcript / Gemini meeting document here"
               style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '2px solid #C8E9A8', fontSize: 13, resize: 'vertical', background: '#fafff8' }}
             />
         </div>
@@ -158,7 +183,7 @@ export default function NewSessionPage() {
         {parsing && (
           <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 8, padding: '10px 14px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Loader2 size={14} color="#538A22" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
-            <span style={{ fontSize: 13, color: '#3a6118', fontWeight: 600 }}>AI is extracting clinical data from the Gemini doc...</span>
+            <span style={{ fontSize: 13, color: '#3a6118', fontWeight: 600 }}>AI is extracting clinical data from the transcript...</span>
           </div>
         )}
         {parsed && (
@@ -172,7 +197,7 @@ export default function NewSessionPage() {
 
         <button type="submit" disabled={loading}
           style={{ width: '100%', padding: '12px', background: '#538A22', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
-          {loading ? 'Saving...' : isFirstSession ? 'Save & Extract from Gemini Doc' : 'Save & Extract from Gemini Doc'}
+          {loading ? 'Saving...' : 'Save & Extract from Transcript'}
         </button>
       </form>
 
