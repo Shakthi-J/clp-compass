@@ -1,17 +1,18 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { Loader2, Sparkles, Send, ClipboardCheck, MessageSquare, AlertCircle, RotateCw, FileText, ChevronDown, ChevronUp } from 'lucide-react'
+import { Loader2, Sparkles, Send, ClipboardCheck, MessageSquare, AlertCircle, RotateCw, FileText, ChevronDown, ChevronUp, BookOpen } from 'lucide-react'
 
 const C = {
   green: '#538A22', greenDeep: '#2F5214', greenSoft: '#F2F9EC', greenBorder: '#C8E9A8',
   amber: '#D98A2B', amberSoft: '#FBF1E3', ink: '#1A2417', muted: '#6b7280',
   faint: '#8A9284', line: '#ECEBE3', card: '#FFFFFF',
 }
-type Msg = { role: 'user' | 'assistant'; content: string }
+type KbSource = { title: string; source_type: string }
+type Msg = { role: 'user' | 'assistant'; content: string; sources?: KbSource[] }
 
 export default function CaseWorkspace({
-  sessionId, patientId, patientName = 'the patient', transcript = '',
-}: { sessionId: string; patientId?: string; patientName?: string; transcript?: string }) {
+  sessionId, patientId, patientName = 'the patient', transcript = '', geminiSummary = '',
+}: { sessionId: string; patientId?: string; patientName?: string; transcript?: string; geminiSummary?: string }) {
   const [summary, setSummary] = useState('')
   const [starters, setStarters] = useState<string[]>([])
   const [summaryError, setSummaryError] = useState('')
@@ -31,7 +32,7 @@ export default function CaseWorkspace({
     try {
       const r = await fetch('/api/qa-chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'summary', patientName: name, transcript }),
+        body: JSON.stringify({ mode: 'summary', patientName: name, transcript, geminiSummary }),
       })
       const j = await r.json()
       if (j.error) { setSummaryError(j.error); return }
@@ -99,10 +100,10 @@ export default function CaseWorkspace({
     try {
       const r = await fetch('/api/qa-chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'chat', patientName, transcript, messages: next }),
+        body: JSON.stringify({ mode: 'chat', patientName, transcript, geminiSummary, messages: next }),
       })
       const j = await r.json()
-      const withReply = [...next, { role: 'assistant' as const, content: j.reply || j.error || '…' }]
+      const withReply = [...next, { role: 'assistant' as const, content: j.reply || j.error || '…', sources: Array.isArray(j.sources) ? j.sources : [] }]
       setMessages(withReply); persist(withReply)
     } catch { setMessages([...next, { role: 'assistant', content: 'Connection issue — try again.' }]) }
     finally { setThinking(false) }
@@ -205,6 +206,12 @@ export default function CaseWorkspace({
                 <div style={{ background: m.role === 'user' ? C.green : C.greenSoft, color: m.role === 'user' ? '#fff' : C.ink, border: m.role === 'user' ? 'none' : `1px solid ${C.greenBorder}`, borderRadius: 14, padding: '11px 14px', fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
                   {m.content}
                 </div>
+                {m.role === 'assistant' && !!m.sources?.length && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginTop: 5, fontSize: 11, color: C.faint }}>
+                    <BookOpen size={11} />
+                    <span>Grounded in: {m.sources.map(s => s.title).join(', ')}</span>
+                  </div>
+                )}
               </div>
             </div>
           ))}
