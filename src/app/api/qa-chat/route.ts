@@ -106,12 +106,19 @@ const MODEL_CHAT = 'openai/gpt-oss-20b';    // discussion — keep on 20b for fr
 // that clears up moments later — this was showing up as "could not respond",
 // with the coach having to manually resend the exact same message to get a
 // reply. Retry once with a short backoff before giving up.
+//
+// IMPORTANT: never retry on 429/413 (rate limit). Retrying a rate-limited call
+// doesn't help — it just burns more of an already-exhausted budget and adds
+// latency, which can compound into a 60s function timeout when combined with
+// the empty-content retry loop that also wraps this. Fail fast instead so
+// friendlyError can respond immediately with the correct message.
 async function withRetry<T>(fn: () => Promise<T>, retries = 1, delayMs = 800): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
-    } catch (err) {
-      if (attempt >= retries) throw err;
+    } catch (err: any) {
+      const status = err?.status;
+      if (attempt >= retries || status === 429 || status === 413) throw err;
       console.error(`Groq call failed (attempt ${attempt + 1}/${retries + 1}), retrying:`, err instanceof Error ? err.message : err);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
