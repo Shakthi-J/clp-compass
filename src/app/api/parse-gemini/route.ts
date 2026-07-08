@@ -15,7 +15,11 @@ export async function POST(req: NextRequest) {
 
     // ── Extract structured data from Gemini doc ───────────────
     const extractRes = await groq.chat.completions.create({
-      model: 'openai/gpt-oss-20b', // was llama-3.1-8b-instant — deprecated, project moved off Groq Llama models
+      // 120b, not 20b: this runs automatically right after session creation, back-to-
+      // back with qa-chat's own summary generation (also on 20b). Sharing one model
+      // means sharing one free-tier TPM budget between two calls fired seconds apart —
+      // using the other model gives this its own separate rate-limit pool.
+      model: 'openai/gpt-oss-120b',
       messages: [
         {
           role: 'system',
