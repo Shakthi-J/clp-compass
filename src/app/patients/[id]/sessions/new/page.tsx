@@ -228,7 +228,7 @@ export default function NewSessionPage() {
         )}
         {parsed && (
           <div style={{ background: C.greenSoft, border: `1px solid ${C.greenBorder}`, borderRadius: 10, padding: '11px 14px', marginBottom: 14, fontSize: 13, color: C.greenDeep, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
-            <CheckCircle2 size={15} /> Extracted {parsed.qa_count} Q&amp;A pairs — profile updated
+            <CheckCircle2 size={15} /> Patient profile updated from transcript
           </div>
         )}
         {error && (
