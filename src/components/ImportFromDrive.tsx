@@ -87,6 +87,12 @@ export default function ImportFromDrive({ onImport, onError }: ImportFromDrivePr
   );
 
   const handleClick = useCallback(() => {
+    if (!CLIENT_ID || !API_KEY) {
+      // Without these, Google's script fails silently (no popup, no callback) —
+      // surface it instead of leaving the button looking dead.
+      onError?.('Google Drive import is not configured on this deployment (missing Client ID / API key env vars).');
+      return;
+    }
     if (!ready) {
       onError?.('Google Drive import is still loading — try again in a moment.');
       return;
