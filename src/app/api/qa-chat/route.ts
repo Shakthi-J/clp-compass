@@ -239,7 +239,7 @@ Return STRICT JSON only, no markdown:
         // no searchable clinical vocabulary on their own — fold in the prior
         // assistant turn's content so the query still carries the topic being
         // discussed, instead of silently finding nothing to ground on.
-        const lastUserIdx = trimmedMessages.map((m) => m.role).lastIndexOf('user');
+        const lastUserIdx = trimmedMessages.map((m: any) => m.role).lastIndexOf('user');
         const latestUserMsg = trimmedMessages[lastUserIdx]?.content || '';
         const priorAssistantMsg = lastUserIdx > 0 && trimmedMessages[lastUserIdx - 1]?.role === 'assistant'
           ? trimmedMessages[lastUserIdx - 1].content
