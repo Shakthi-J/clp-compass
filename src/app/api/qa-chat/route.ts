@@ -9,6 +9,10 @@
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+// Without this, Vercel defaults to a 10s function timeout — fine for a single
+// Groq call, but chat mode now also does an HF embedding call + Supabase
+// lookups before that, which can tip past 10s and get killed mid-request.
+export const maxDuration = 60;
 
 import Groq from 'groq-sdk';
 import { supabaseAdmin } from '@/lib/supabase';
@@ -122,7 +126,7 @@ HOW TO REPLY — this matters most:
 function friendlyError(err: any) {
   console.error('qa-chat request failed:', err?.message || err, err?.error ?? '');
   const status = err?.status || 500;
-  if (status === 413 || err?.error?.error?.code === 'rate_limit_exceeded') {
+  if (status === 413 || status === 429 || err?.error?.error?.code === 'rate_limit_exceeded') {
     return Response.json(
       { error: 'This transcript is long for the free tier. It has been trimmed automatically — if this keeps happening, wait a minute and retry, or shorten the transcript.' },
       { status: 200 } // return 200 so the UI shows the message instead of a hard failure
