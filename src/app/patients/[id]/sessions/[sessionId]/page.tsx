@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Wand2 } from 'lucide-react'
-import QAChat from '@/components/QAChat'
+import CaseWorkspace from '@/components/CaseWorkspace'
 export const revalidate = 0
 
 export default async function SessionDetailPage({ params }: { params: Promise<{ id: string; sessionId: string }> }) {
@@ -19,12 +19,10 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto' }}>
-      {/* Back */}
       <Link href={`/patients/${id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280', textDecoration: 'none', marginBottom: 20 }}>
         <ArrowLeft size={14} /> {patient.full_name}
       </Link>
 
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 700, color: '#111827', textTransform: 'capitalize' }}>
@@ -41,18 +39,7 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
         )}
       </div>
 
-      {/* Gemini doc summary if present */}
-      {session.gemini_doc_raw && (
-        <div style={{ background: '#fff', borderRadius: 12, padding: '16px 20px', border: '1px solid #e5e7eb', marginBottom: 16 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>📄 Gemini Meeting Document</div>
-          <p style={{ fontSize: 13, color: '#374151', lineHeight: 1.7, whiteSpace: 'pre-wrap', maxHeight: 120, overflow: 'hidden' }}>
-            {session.gemini_doc_raw.slice(0, 300)}...
-          </p>
-          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6 }}>✅ Auto-extracted into Q&A below</div>
-        </div>
-      )}
-
-      {/* Notes */}
+      {/* Notes stay above the workspace */}
       {(session.pre_meeting_notes || session.post_meeting_notes) && (
         <div style={{ background: '#fff', borderRadius: 12, padding: '16px 20px', border: '1px solid #e5e7eb', marginBottom: 16 }}>
           {session.pre_meeting_notes && (
@@ -70,21 +57,13 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
         </div>
       )}
 
-      {/* Q&A — always visible */}
-      <QAChat
+      {/* Case summary (top card) + discussion — one component, one summary generation */}
+      <CaseWorkspace
         sessionId={sessionId}
         patientId={id}
         patientName={patient.full_name}
-        initialQA={session.qa_pairs ?? []}
-        initialInstructions={session.roadmap_instructions ?? ''}
+        transcript={session.gemini_doc_raw ?? ''}
       />
-
-      {/* Generate roadmap hint */}
-      {!hasContent && (
-        <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 10, padding: '14px 18px', marginTop: 16, fontSize: 13, color: '#538A22' }}>
-          💡 Answer the Q&A above to unlock roadmap generation
-        </div>
-      )}
     </div>
   )
 }

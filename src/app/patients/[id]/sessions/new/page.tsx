@@ -1,9 +1,15 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, Loader2, CheckCircle2, ClipboardPaste, FileText } from 'lucide-react'
 import Link from 'next/link'
 import ImportFromDrive from '@/components/ImportFromDrive'
+
+const C = {
+  green: '#538A22', greenDeep: '#2F5214', greenSoft: '#F2F9EC', greenBorder: '#C8E9A8',
+  amber: '#D98A2B', amberSoft: '#FBF1E3', ink: '#1A2417', muted: '#6b7280',
+  faint: '#8A9284', line: '#ECEBE3', card: '#FFFFFF',
+}
 
 export default function NewSessionPage() {
   const router = useRouter()
@@ -13,7 +19,6 @@ export default function NewSessionPage() {
   const [sessionType, setSessionType] = useState<'first-meet' | 'follow-up' | 'review'>('first-meet')
   const [geminiDoc, setGeminiDoc] = useState('')
   const [preNotes, setPreNotes] = useState('')
-  const [showGemini, setShowGemini] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [parsing, setParsing] = useState(false)
@@ -22,7 +27,6 @@ export default function NewSessionPage() {
   const [importError, setImportError] = useState('')
   const [importedFileName, setImportedFileName] = useState('')
 
-  // Check if this patient has existing sessions
   useEffect(() => {
     fetch(`/api/sessions?patient_id=${patientId}`)
       .then(r => r.json())
@@ -35,12 +39,12 @@ export default function NewSessionPage() {
   }, [patientId])
 
   const isFirstSession = sessionCount === 0
+  const hasTranscript = geminiDoc.trim().length > 0
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError('')
-
     try {
       const sessionRes = await fetch('/api/sessions', {
         method: 'POST',
@@ -53,11 +57,9 @@ export default function NewSessionPage() {
         }),
       })
       const sessionJson = await sessionRes.json()
-      if (!sessionRes.ok) { setError(sessionJson.error || 'Failed'); setLoading(false); return }
-
+      if (!sessionRes.ok) { setError(sessionJson.error || 'Could not create the session. Try again.'); setLoading(false); return }
       const sessionId = sessionJson.id
 
-      // Auto-parse Gemini doc if pasted or imported from Drive
       if (geminiDoc.trim().length > 100) {
         setParsing(true)
         const parseRes = await fetch('/api/parse-gemini', {
@@ -69,135 +71,126 @@ export default function NewSessionPage() {
         setParsing(false)
         if (parseRes.ok) setParsed(parseJson.extracted)
       }
-
       router.push(`/patients/${patientId}/sessions/${sessionId}`)
     } catch {
-      setError('Network error — try again')
+      setError('Network error — check your connection and try again.')
       setLoading(false)
     }
   }
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto' }}>
-      <Link href={`/patients/${patientId}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280', textDecoration: 'none', marginBottom: 20 }}>
-        <ArrowLeft size={14} /> Back to Patient
+    <div style={{ maxWidth: 620, margin: '0 auto' }}>
+      <Link href={`/patients/${patientId}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: C.faint, textDecoration: 'none', marginBottom: 18, fontWeight: 500 }}>
+        <ArrowLeft size={14} /> Back to patient
       </Link>
 
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>
-          {isFirstSession ? 'Start First Session' : 'New Session'}
+      <div style={{ marginBottom: 22 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: C.ink, margin: 0, letterSpacing: '-0.02em' }}>
+          {isFirstSession ? 'Start first session' : 'New session'}
         </h1>
-        <p style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>
-          {isFirstSession
-            ? 'Import the transcript from Drive, or paste the Gemini meeting doc — AI will extract everything automatically.'
-            : 'Add session notes, then import from Drive or paste the Gemini doc from your meeting.'
-          }
+        <p style={{ fontSize: 13.5, color: C.muted, marginTop: 5 }}>
+          Import the transcript your Meet saved to Drive, or paste it in — the AI extracts symptoms, diet, habits and builds the Q&amp;A automatically.
         </p>
       </div>
 
-      {/* Flow steps */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24 }}>
-        {(isFirstSession
-          ? ['Start Session', 'Import / Paste Transcript', 'Generate Roadmap']
-          : ['Add Session', 'Import / Paste Transcript', 'Update Roadmap']
-        ).map((step, i, arr) => (
-          <div key={step} style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 24, height: 24, borderRadius: '50%', background: i === 0 ? '#538A22' : '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: i === 0 ? '#fff' : '#9ca3af', flexShrink: 0 }}>{i + 1}</div>
-              <span style={{ fontSize: 12, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? '#538A22' : '#9ca3af', whiteSpace: 'nowrap' }}>{step}</span>
-            </div>
-            {i < arr.length - 1 && <div style={{ flex: 1, height: 1, background: '#e5e7eb', margin: '0 8px' }} />}
-          </div>
-        ))}
-      </div>
-
-      <form onSubmit={handleSubmit} style={{ background: '#fff', borderRadius: 12, padding: 24, border: '1px solid #e5e7eb' }}>
+      <form onSubmit={handleSubmit} style={{ background: C.card, borderRadius: 16, padding: 24, border: `1px solid ${C.line}`, boxShadow: '0 1px 3px rgba(26,36,23,0.04)' }}>
 
         {/* Session type */}
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 8 }}>Session Type</label>
+        <div style={{ marginBottom: 22 }}>
+          <label style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: C.greenDeep, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Session type</label>
           <div style={{ display: 'flex', gap: 8 }}>
             {(['first-meet', 'follow-up', 'review'] as const).map(t => (
-              <button key={t} type="button" onClick={() => setSessionType(t)} style={{ flex: 1, padding: '8px 4px', borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: '1px solid', borderColor: sessionType === t ? '#538A22' : '#e5e7eb', background: sessionType === t ? '#F2F9EC' : '#fff', color: sessionType === t ? '#538A22' : '#6b7280', textTransform: 'capitalize' }}>
+              <button key={t} type="button" onClick={() => setSessionType(t)}
+                style={{ flex: 1, padding: '10px 4px', borderRadius: 10, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', border: '1px solid', borderColor: sessionType === t ? C.green : C.line, background: sessionType === t ? C.greenSoft : C.card, color: sessionType === t ? C.greenDeep : C.muted, textTransform: 'capitalize', transition: 'all 0.15s' }}>
                 {t.replace('-', ' ')}
               </button>
             ))}
           </div>
         </div>
 
+        {/* Transcript — primary: Drive import */}
+        <div style={{ marginBottom: 22 }}>
+          <label style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: C.greenDeep, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.03em' }}>Meeting transcript</label>
+
+          {/* Primary action card */}
+          <div style={{ background: C.greenSoft, border: `1px solid ${C.greenBorder}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: hasTranscript ? 12 : 0 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: C.card, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: `1px solid ${C.greenBorder}` }}>
+                <FileText size={18} color={C.green} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>Import from Google Drive</div>
+                <div style={{ fontSize: 12, color: C.greenDeep }}>Pick the transcript Doc Meet saved for this call</div>
+              </div>
+              <ImportFromDrive
+                onImport={(text, fileName) => { setGeminiDoc(text); setImportedFileName(fileName); setImportError('') }}
+                onError={(msg) => setImportError(msg)}
+              />
+            </div>
+            {importedFileName && !importError && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: C.greenDeep, fontWeight: 600, paddingTop: 4 }}>
+                <CheckCircle2 size={14} /> Imported “{importedFileName}”
+              </div>
+            )}
+            {importError && <p style={{ color: '#b91c1c', fontSize: 12, margin: '8px 0 0' }}>{importError}</p>}
+          </div>
+
+          {/* Divider */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0 12px', color: C.faint, fontSize: 11.5, fontWeight: 600 }}>
+            <div style={{ flex: 1, height: 1, background: C.line }} />
+            OR PASTE MANUALLY
+            <div style={{ flex: 1, height: 1, background: C.line }} />
+          </div>
+
+          <div style={{ position: 'relative' }}>
+            <textarea
+              value={geminiDoc}
+              onChange={e => setGeminiDoc(e.target.value)}
+              rows={9}
+              placeholder="Paste the full transcript or Gemini meeting doc here…"
+              style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: `1.5px solid ${hasTranscript ? C.greenBorder : C.line}`, fontSize: 13, resize: 'vertical', background: hasTranscript ? '#FCFEF9' : C.card, color: C.ink, fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }}
+            />
+            {hasTranscript && (
+              <span style={{ position: 'absolute', top: 10, right: 12, fontSize: 11, fontWeight: 700, color: C.green, background: C.greenSoft, borderRadius: 20, padding: '2px 9px' }}>
+                {geminiDoc.trim().split(/\s+/).length} words
+              </span>
+            )}
+          </div>
+        </div>
+
         {/* Pre-session notes */}
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#374151', marginBottom: 6 }}>
-            Pre-Session Notes <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span>
+        <div style={{ marginBottom: 22 }}>
+          <label style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: C.greenDeep, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+            Pre-session notes <span style={{ fontWeight: 500, color: C.faint, textTransform: 'none', letterSpacing: 0 }}>· optional</span>
           </label>
           <textarea
             value={preNotes}
             onChange={e => setPreNotes(e.target.value)}
             rows={3}
-            placeholder={isFirstSession
-              ? "Any observations before the session starts — patient background, referral notes..."
-              : "Notes before the follow-up — what you want to check on, concerns from last session..."
-            }
-            style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, resize: 'vertical' }}
+            placeholder={isFirstSession ? 'Patient background, referral notes, anything to keep in mind…' : 'What to check on this visit, concerns from last time…'}
+            style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: `1px solid ${C.line}`, fontSize: 13, resize: 'vertical', color: C.ink, fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }}
           />
         </div>
 
-        {/* Gemini doc — import from Drive or paste manually */}
-        <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 4 }}>
-              Meeting Transcript <span style={{ fontSize: 11, fontWeight: 400, color: '#538A22', marginLeft: 8 }}>← import or paste to auto-extract everything</span>
-            </label>
-            <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 10 }}>
-              Import the transcript Doc Google Meet saved to Drive, or paste your Gemini meeting notes — AI extracts patient profile, symptoms, diet, habits and generates Q&A automatically
-            </p>
-
-            <div style={{ marginBottom: 10 }}>
-              <ImportFromDrive
-                onImport={(text, fileName) => {
-                  setGeminiDoc(text)
-                  setImportedFileName(fileName)
-                  setImportError('')
-                }}
-                onError={(msg) => setImportError(msg)}
-              />
-              {importedFileName && !importError && (
-                <span style={{ marginLeft: 10, fontSize: 12, color: '#538A22', fontWeight: 600 }}>
-                  ✓ Imported "{importedFileName}"
-                </span>
-              )}
-              {importError && (
-                <p style={{ color: '#dc2626', fontSize: 12, marginTop: 6 }}>{importError}</p>
-              )}
-            </div>
-
-            <textarea
-              value={geminiDoc}
-              onChange={e => setGeminiDoc(e.target.value)}
-              rows={10}
-              placeholder="...or paste the full transcript / Gemini meeting document here"
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '2px solid #C8E9A8', fontSize: 13, resize: 'vertical', background: '#fafff8' }}
-            />
-        </div>
-
-        {/* Status messages */}
+        {/* Status */}
         {parsing && (
-          <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 8, padding: '10px 14px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Loader2 size={14} color="#538A22" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
-            <span style={{ fontSize: 13, color: '#3a6118', fontWeight: 600 }}>AI is extracting clinical data from the transcript...</span>
+          <div style={{ background: C.greenSoft, border: `1px solid ${C.greenBorder}`, borderRadius: 10, padding: '11px 14px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Loader2 size={14} color={C.green} style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, color: C.greenDeep, fontWeight: 600 }}>Reading the transcript and extracting clinical data…</span>
           </div>
         )}
         {parsed && (
-          <div style={{ background: '#F2F9EC', border: '1px solid #C8E9A8', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#3a6118', fontWeight: 600 }}>
-            ✅ Extracted {parsed.qa_count} Q&A pairs — patient profile updated
+          <div style={{ background: C.greenSoft, border: `1px solid ${C.greenBorder}`, borderRadius: 10, padding: '11px 14px', marginBottom: 14, fontSize: 13, color: C.greenDeep, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+            <CheckCircle2 size={15} /> Extracted {parsed.qa_count} Q&amp;A pairs — profile updated
           </div>
         )}
         {error && (
-          <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8, padding: '10px 14px', color: '#dc2626', fontSize: 13, marginBottom: 14 }}>{error}</div>
+          <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, padding: '11px 14px', color: '#dc2626', fontSize: 13, marginBottom: 14 }}>{error}</div>
         )}
 
         <button type="submit" disabled={loading}
-          style={{ width: '100%', padding: '12px', background: '#538A22', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
-          {loading ? 'Saving...' : 'Save & Extract from Transcript'}
+          style={{ width: '100%', padding: 13, background: loading ? '#7BA84F' : C.green, color: '#fff', border: 'none', borderRadius: 11, fontSize: 14.5, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', boxShadow: '0 2px 8px rgba(83,138,34,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          {loading ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Saving…</> : hasTranscript ? 'Save & extract from transcript' : 'Save session'}
         </button>
       </form>
 
