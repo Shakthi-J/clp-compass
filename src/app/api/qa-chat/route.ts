@@ -252,20 +252,69 @@ Return STRICT JSON only, no markdown:
           setTimeout(() => resolve({ kbContext: '', sources: [] }), 5000)
         );
         const { kbContext, sources } = await Promise.race([retrieveKbContext(latestQuestion), kbTimeout]);
+        // Strict KB-grounding rules: answer ONLY from the retrieved excerpts when
+        // they exist. When nothing was retrieved, don't quietly fall back to
+        // general knowledge — say so, and only answer generally if the coach
+        // explicitly asks for that despite the gap (signaled via a literal
+        // [GENERAL] marker token so the server can flag it for the UI).
         const kbBlock = kbContext
-          ? `\n\nRelevant excerpts from the clinical knowledge base (use only if actually relevant to the coach's question — don't force it in):\n\n${kbContext}`
+          ? `\n\nKNOWLEDGE BASE EXCERPTS (this is your source of truth for this reply — answer using ONLY these, don't introduce clinical claims they don't support):\n\n${kbContext}`
           : '';
+        // Shared "miss" behavior — applies whether nothing was retrieved at all,
+        // or something was retrieved but doesn't actually address the question.
+        // The two marker tokens are mutually exclusive: [GENERAL] means "coach
+        // already explicitly asked me to answer generally despite the gap, so
+        // I'm doing that now" (works regardless of why there's a gap); [NO_MATCH]
+        // means "retrieved excerpts were irrelevant and I'm NOT answering
+        // generally — I'm asking for clarification / offering alternatives
+        // instead". Never emit both.
+        const missInstructions = `Tell the coach plainly that this specific point isn't covered in the current knowledge base, then either ask a clarifying question or offer 2-3 concrete alternative angles to explore instead — UNLESS the coach's latest message already explicitly asks you to proceed anyway with a general/best-practice answer despite that gap (e.g. "yes give me general advice", "that's fine, go ahead"), in which case answer using your own clinical knowledge instead, and your reply MUST start with the literal token "[GENERAL]" as the very first characters, nothing before it. If the coach's message is just a conversational continuation ("yes" to a plan, logistics) that doesn't actually need new factual grounding, respond naturally and don't mention the knowledge base or use any marker at all.`;
+        const groundingRule = kbContext
+          ? `\n\nGROUNDING RULE: First check whether the knowledge base excerpts above actually address the coach's specific question — the search that found them is keyword-based and imperfect, so they may be irrelevant. If they DO address it, base your reply strictly on them, don't introduce clinical claims they don't support. If they DON'T (wrong topic entirely) and you are not giving a general answer per the rule below, your reply must start with the literal token "[NO_MATCH]" as the very first characters. Either way, if treating this as a miss: ${missInstructions}`
+          : `\n\nGROUNDING RULE: No knowledge base material was found for this question. If it's a genuine factual/clinical question: ${missInstructions}`;
 
-        const completion = await withRetry(() => groq.chat.completions.create({
+        const chatRequest = {
           model: MODEL_CHAT,
-          temperature: 0.6,
-          max_tokens: 350, // keep replies short & conversational, not essays
+          temperature: 0.3, // was 0.6 — this now follows conditional grounding/marker
+          // logic, not just free conversation; lower temperature makes that
+          // instruction-following meaningfully more consistent.
+          max_tokens: 600, // was 350 — the grounding rules made this a reasoning-heavy
+          // prompt, and gpt-oss models can burn their whole token budget on internal
+          // reasoning before producing visible output, hitting finish_reason:'length'
+          // with empty content.
           messages: [
-            { role: 'system', content: `${baseIdentity(patientName)}\n\nConsultation transcript (may be trimmed):\n\n${transcript}${geminiSummaryBlock}${kbBlock}` },
+            { role: 'system' as const, content: `${baseIdentity(patientName)}\n\nConsultation transcript (may be trimmed):\n\n${transcript}${geminiSummaryBlock}${kbBlock}${groundingRule}` },
             ...trimmedMessages,
           ],
-        }));
-        return Response.json({ reply: completion.choices[0]?.message?.content || '', sources });
+        };
+
+        // Some open-weight models occasionally return genuinely empty content
+        // (nothing to do with rate limits/network errors, so withRetry's own
+        // retry doesn't cover it) — retry once more specifically for that.
+        let reply = '';
+        for (let attempt = 0; attempt < 2 && !reply.trim(); attempt++) {
+          const completion = await withRetry(() => groq.chat.completions.create(chatRequest));
+          reply = completion.choices[0]?.message?.content || '';
+          if (!reply.trim()) console.log(`[qa-chat debug] empty content (attempt ${attempt + 1}/2), finish_reason:`, completion.choices[0]?.finish_reason);
+        }
+        if (!reply.trim()) reply = "I didn't get a clear answer that time — could you try rephrasing, or ask again?";
+
+        let generalAnswer = false;
+        let effectiveSources = sources;
+        if (reply.startsWith('[GENERAL]')) {
+          // This answer is explicitly NOT based on the KB — clear sources so
+          // the UI doesn't misleadingly show them as this reply's grounding.
+          generalAnswer = true;
+          effectiveSources = [];
+          reply = reply.replace(/^\[GENERAL\]\s*/, '');
+        } else if (reply.startsWith('[NO_MATCH]')) {
+          // The model judged the retrieved excerpts irrelevant to this specific
+          // question — treat it as a miss rather than showing misleading sources.
+          reply = reply.replace(/^\[NO_MATCH\]\s*/, '');
+          effectiveSources = [];
+        }
+        const kbMiss = !effectiveSources.length && !generalAnswer;
+        return Response.json({ reply, sources: effectiveSources, generalAnswer, kbMiss });
       } catch (err) { return friendlyError(err); }
     }
 

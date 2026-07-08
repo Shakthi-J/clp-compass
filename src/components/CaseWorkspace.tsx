@@ -8,7 +8,7 @@ const C = {
   faint: '#8A9284', line: '#ECEBE3', card: '#FFFFFF',
 }
 type KbSource = { title: string; source_type: string }
-type Msg = { role: 'user' | 'assistant'; content: string; sources?: KbSource[] }
+type Msg = { role: 'user' | 'assistant'; content: string; sources?: KbSource[]; generalAnswer?: boolean; kbMiss?: boolean }
 
 export default function CaseWorkspace({
   sessionId, patientId, patientName = 'the patient', transcript = '', geminiSummary = '',
@@ -103,7 +103,7 @@ export default function CaseWorkspace({
         body: JSON.stringify({ mode: 'chat', patientName, transcript, geminiSummary, messages: next }),
       })
       const j = await r.json()
-      const withReply = [...next, { role: 'assistant' as const, content: j.reply || j.error || '…', sources: Array.isArray(j.sources) ? j.sources : [] }]
+      const withReply = [...next, { role: 'assistant' as const, content: j.reply || j.error || '…', sources: Array.isArray(j.sources) ? j.sources : [], generalAnswer: !!j.generalAnswer, kbMiss: !!j.kbMiss }]
       setMessages(withReply); persist(withReply)
     } catch { setMessages([...next, { role: 'assistant', content: 'Connection issue — try again.' }]) }
     finally { setThinking(false) }
@@ -219,6 +219,16 @@ export default function CaseWorkspace({
                       ))}
                     </ul>
                   </details>
+                )}
+                {m.role === 'assistant' && !m.sources?.length && m.generalAnswer && (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 5, fontSize: 11, color: '#9A6316', fontWeight: 600, background: C.amberSoft, border: '1px solid #F0D9B5', borderRadius: 20, padding: '3px 10px' }}>
+                    <Sparkles size={11} /> General AI knowledge — not from knowledge base
+                  </div>
+                )}
+                {m.role === 'assistant' && !m.sources?.length && m.kbMiss && !m.generalAnswer && (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 5, fontSize: 11, color: C.faint, fontWeight: 600, background: '#FBFBF8', border: `1px solid ${C.line}`, borderRadius: 20, padding: '3px 10px' }}>
+                    <AlertCircle size={11} /> Not in knowledge base
+                  </div>
                 )}
               </div>
             </div>
