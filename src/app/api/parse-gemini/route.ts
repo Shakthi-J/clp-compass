@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
 
     // ── Extract structured data from Gemini doc ───────────────
     const extractRes = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
+      model: 'openai/gpt-oss-20b', // was llama-3.1-8b-instant — deprecated, project moved off Groq Llama models
       messages: [
         {
           role: 'system',

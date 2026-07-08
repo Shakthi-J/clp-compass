@@ -176,14 +176,14 @@ export async function POST(req: Request) {
 
     if (mode === 'summary') {
       try {
-        const completion = await withRetry(() => groq.chat.completions.create({
+        const summaryRequest = {
           model: MODEL_FAST,
           temperature: 0.4,
           max_tokens: 1024, // was 700 — too tight for summary + 3-4 starters, caused JSON truncation
-          response_format: { type: 'json_object' }, // forces valid, closed JSON instead of prose-wrapped output
+          response_format: { type: 'json_object' as const }, // forces valid, closed JSON instead of prose-wrapped output
           messages: [
             {
-              role: 'system',
+              role: 'system' as const,
               content: `${baseIdentity(patientName)}
 
 TASK: You have the full transcript (ground truth) and, if provided, Gemini's own
@@ -200,10 +200,20 @@ Return STRICT JSON only, no markdown:
   "starters": ["3 to 4 specific discussion angles a coaching team should explore to build ${patientName}'s plan — phrased as case-discussion prompts, not questions to the patient"]
 }`,
             },
-            { role: 'user', content: `Transcript:\n\n${transcript}${geminiSummaryBlock}` },
+            { role: 'user' as const, content: `Transcript:\n\n${transcript}${geminiSummaryBlock}` },
           ],
-        }));
-        const raw = completion.choices[0]?.message?.content || '{}';
+        };
+
+        // Same empty-completion quirk seen in chat mode — retry once more
+        // specifically for that before giving up (separate from withRetry,
+        // which only covers network/API-level failures, not blank success).
+        let raw = '';
+        for (let attempt = 0; attempt < 2 && !raw.trim(); attempt++) {
+          const completion = await withRetry(() => groq.chat.completions.create(summaryRequest));
+          raw = completion.choices[0]?.message?.content || '';
+          if (!raw.trim()) console.log(`[qa-chat debug] summary empty content (attempt ${attempt + 1}/2), finish_reason:`, completion.choices[0]?.finish_reason);
+        }
+        raw = raw || '{}';
         let parsed: { summary?: string; starters?: string[] } = {};
         // Robustly pull JSON out even if the model wraps it in prose or ``` fences.
         try {
