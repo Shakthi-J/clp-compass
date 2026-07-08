@@ -63,6 +63,7 @@ export default async function SessionDetailPage({ params }: { params: Promise<{ 
         patientId={id}
         patientName={patient.full_name}
         transcript={session.gemini_doc_raw ?? ''}
+        geminiSummary={session.gemini_summary_raw ?? ''}
       />
     </div>
   )

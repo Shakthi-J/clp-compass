@@ -18,6 +18,7 @@ export default function NewSessionPage() {
 
   const [sessionType, setSessionType] = useState<'first-meet' | 'follow-up' | 'review'>('first-meet')
   const [geminiDoc, setGeminiDoc] = useState('')
+  const [geminiSummary, setGeminiSummary] = useState('')
   const [preNotes, setPreNotes] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -26,6 +27,8 @@ export default function NewSessionPage() {
   const [sessionCount, setSessionCount] = useState(0)
   const [importError, setImportError] = useState('')
   const [importedFileName, setImportedFileName] = useState('')
+  const [summaryImportError, setSummaryImportError] = useState('')
+  const [importedSummaryFileName, setImportedSummaryFileName] = useState('')
 
   useEffect(() => {
     fetch(`/api/sessions?patient_id=${patientId}`)
@@ -53,6 +56,7 @@ export default function NewSessionPage() {
           patient_id: patientId,
           session_type: sessionType,
           gemini_doc_raw: geminiDoc || null,
+          gemini_summary_raw: geminiSummary || null,
           pre_meeting_notes: preNotes || null,
         }),
       })
@@ -147,7 +151,7 @@ export default function NewSessionPage() {
               value={geminiDoc}
               onChange={e => setGeminiDoc(e.target.value)}
               rows={9}
-              placeholder="Paste the full transcript or Gemini meeting doc here…"
+              placeholder="Paste the full meeting transcript here…"
               style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: `1.5px solid ${hasTranscript ? C.greenBorder : C.line}`, fontSize: 13, resize: 'vertical', background: hasTranscript ? '#FCFEF9' : C.card, color: C.ink, fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }}
             />
             {hasTranscript && (
@@ -156,6 +160,49 @@ export default function NewSessionPage() {
               </span>
             )}
           </div>
+        </div>
+
+        {/* Gemini's own meeting-summary doc — separate from the raw transcript above */}
+        <div style={{ marginBottom: 22 }}>
+          <label style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: C.greenDeep, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+            Gemini meeting summary <span style={{ fontWeight: 500, color: C.faint, textTransform: 'none', letterSpacing: 0 }}>· optional</span>
+          </label>
+
+          <div style={{ background: C.greenSoft, border: `1px solid ${C.greenBorder}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: geminiSummary.trim().length > 0 ? 12 : 0 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: C.card, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: `1px solid ${C.greenBorder}` }}>
+                <FileText size={18} color={C.green} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: C.ink }}>Import from Google Drive</div>
+                <div style={{ fontSize: 12, color: C.greenDeep }}>Pick the summary Doc Gemini auto-generated for this call</div>
+              </div>
+              <ImportFromDrive
+                onImport={(text, fileName) => { setGeminiSummary(text); setImportedSummaryFileName(fileName); setSummaryImportError('') }}
+                onError={(msg) => setSummaryImportError(msg)}
+              />
+            </div>
+            {importedSummaryFileName && !summaryImportError && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: C.greenDeep, fontWeight: 600, paddingTop: 4 }}>
+                <CheckCircle2 size={14} /> Imported “{importedSummaryFileName}”
+              </div>
+            )}
+            {summaryImportError && <p style={{ color: '#b91c1c', fontSize: 12, margin: '8px 0 0' }}>{summaryImportError}</p>}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0 12px', color: C.faint, fontSize: 11.5, fontWeight: 600 }}>
+            <div style={{ flex: 1, height: 1, background: C.line }} />
+            OR PASTE MANUALLY
+            <div style={{ flex: 1, height: 1, background: C.line }} />
+          </div>
+
+          <textarea
+            value={geminiSummary}
+            onChange={e => setGeminiSummary(e.target.value)}
+            rows={5}
+            placeholder="Paste Gemini's auto-generated meeting summary here…"
+            style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: `1px solid ${C.line}`, fontSize: 13, resize: 'vertical', color: C.ink, fontFamily: 'inherit', lineHeight: 1.5, boxSizing: 'border-box' }}
+          />
         </div>
 
         {/* Pre-session notes */}

@@ -11,8 +11,77 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 import Groq from 'groq-sdk';
+import { supabaseAdmin } from '@/lib/supabase';
+import { embedText } from '@/lib/embeddings';
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+const STOP_WORDS = new Set(['the', 'patient', 'is', 'are', 'was', 'with', 'and', 'has', 'have', 'been', 'their', 'they', 'this', 'that', 'from', 'for', 'not', 'but', 'can', 'also', 'more', 'very', 'some', 'into', 'over', 'after', 'what', 'when', 'how', 'why', 'about', 'should', 'would', 'could']);
+
+type KbSource = { title: string; source_type: string };
+
+// Grounds each chat turn in the clinical knowledge base (kb_documents/kb_chunks).
+// Vector search first (needs HUGGINGFACE_API_KEY for embeddings), falls back to
+// Postgres full-text search on keywords so retrieval still works without it.
+// Returns both the context to feed the model AND the sources to show the coach —
+// that second part is what lets the UI prove an answer was actually RAG-grounded.
+async function retrieveKbContext(queryText: string): Promise<{ kbContext: string; sources: KbSource[] }> {
+  const empty = { kbContext: '', sources: [] as KbSource[] };
+  if (!queryText.trim()) return empty;
+
+  try {
+    let chunks: { content: string; document_id: string }[] = [];
+
+    const embedding = await embedText(queryText.slice(0, 512));
+    if (embedding && embedding.length === 384) {
+      const { data } = await supabaseAdmin.rpc('match_kb_chunks', {
+        query_embedding: embedding,
+        match_threshold: 0.3,
+        match_count: 6,
+      });
+      if (data?.length) chunks = data;
+    }
+
+    if (!chunks.length) {
+      // Without embeddings this is a blunt instrument, so favor precision over
+      // recall: AND together the 3 most specific (longest) keywords rather than
+      // OR-ing everything — an OR of generic words like "mechanism"/"therapy"
+      // pulls in unrelated books (e.g. a habits book) as false "grounding".
+      const keywords = [...new Set(
+        queryText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
+          .filter((w) => w.length > 4 && !STOP_WORDS.has(w))
+      )]
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 3);
+
+      if (keywords.length >= 2) {
+        const { data, error } = await supabaseAdmin
+          .from('kb_chunks').select('content, document_id')
+          .textSearch('content', keywords.join(' '), { type: 'plain', config: 'english' })
+          .limit(6);
+        if (error) console.error('KB keyword search error:', error.message);
+        if (data?.length) chunks = data;
+      }
+    }
+
+    if (!chunks.length) return empty;
+
+    const docIds = [...new Set(chunks.map((c) => c.document_id))];
+    const { data: docs } = await supabaseAdmin.from('kb_documents').select('id, title, source_type').in('id', docIds);
+    const docMap = Object.fromEntries((docs ?? []).map((d: { id: string; title: string; source_type: string }) => [d.id, d]));
+
+    const kbContext = chunks.map((c, i) => `[KB ${i + 1}]: ${c.content.slice(0, 350)}`).join('\n\n');
+    const sources: KbSource[] = docIds.map((id) => ({
+      title: docMap[id]?.title ?? 'Unknown source',
+      source_type: docMap[id]?.source_type ?? 'unknown',
+    }));
+
+    return { kbContext, sources };
+  } catch (err) {
+    console.error('KB retrieval error:', err instanceof Error ? err.message : err);
+    return empty; // retrieval is a bonus, never block the chat reply on it
+  }
+}
 
 // Two models so we stay under the per-minute token limit:
 const MODEL_FAST = 'openai/gpt-oss-20b';    // summaries / drafting — lighter load
@@ -21,15 +90,18 @@ const MODEL_CHAT = 'openai/gpt-oss-20b';    // discussion — keep on 20b for fr
 // Rough token budget for the transcript we send. ~1 token ≈ 4 chars.
 // Keep well under the 8k TPM limit once the prompt + reply are added.
 const MAX_TRANSCRIPT_CHARS = 16000; // ~4,000 tokens
+// Gemini's own meeting-summary doc is a secondary reference, not the ground
+// truth — give it a smaller budget so it can't crowd out the real transcript.
+const MAX_GEMINI_SUMMARY_CHARS = 6000; // ~1,500 tokens
 
-// Trim a transcript to a safe size. Keeps the start (where concerns/history are
+// Trim text to a safe size. Keeps the start (where concerns/history are
 // stated) and the end (where plan/next-steps usually land), dropping the middle.
-function trimTranscript(t: string): string {
+function trimToBudget(t: string, maxChars: number): string {
   if (!t) return '';
-  if (t.length <= MAX_TRANSCRIPT_CHARS) return t;
-  const head = t.slice(0, Math.floor(MAX_TRANSCRIPT_CHARS * 0.7));
-  const tail = t.slice(-Math.floor(MAX_TRANSCRIPT_CHARS * 0.3));
-  return `${head}\n\n…[middle of transcript trimmed to fit free-tier limit]…\n\n${tail}`;
+  if (t.length <= maxChars) return t;
+  const head = t.slice(0, Math.floor(maxChars * 0.7));
+  const tail = t.slice(-Math.floor(maxChars * 0.3));
+  return `${head}\n\n…[middle trimmed to fit free-tier limit]…\n\n${tail}`;
 }
 
 function baseIdentity(patientName: string) {
@@ -48,6 +120,7 @@ HOW TO REPLY — this matters most:
 }
 
 function friendlyError(err: any) {
+  console.error('qa-chat request failed:', err?.message || err, err?.error ?? '');
   const status = err?.status || 500;
   if (status === 413 || err?.error?.error?.code === 'rate_limit_exceeded') {
     return Response.json(
@@ -62,26 +135,41 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { mode, patientName = 'the patient', messages = [] } = body;
-    const transcript = trimTranscript(body.transcript || '');
+    const transcript = trimToBudget(body.transcript || '', MAX_TRANSCRIPT_CHARS);
+    const geminiSummary = trimToBudget(body.geminiSummary || '', MAX_GEMINI_SUMMARY_CHARS);
+    // Gemini's summary is a secondary reference the model cross-checks against the
+    // transcript — never trust it alone, and never just restate it.
+    const geminiSummaryBlock = geminiSummary
+      ? `\n\nGemini's own auto-generated meeting summary (secondary reference — may be incomplete or miss things; cross-check against the transcript above, don't just restate it):\n\n${geminiSummary}`
+      : '';
 
     if (mode === 'summary') {
       try {
         const completion = await groq.chat.completions.create({
           model: MODEL_FAST,
           temperature: 0.4,
-          max_tokens: 700,
+          max_tokens: 1024, // was 700 — too tight for summary + 3-4 starters, caused JSON truncation
+          response_format: { type: 'json_object' }, // forces valid, closed JSON instead of prose-wrapped output
           messages: [
             {
               role: 'system',
               content: `${baseIdentity(patientName)}
 
-TASK: Read the consultation transcript. Return STRICT JSON only, no markdown:
+TASK: You have the full transcript (ground truth) and, if provided, Gemini's own
+auto-generated meeting summary (a secondary reference that may be incomplete or
+miss things). Cross-check the two: build ONE clean, complete clinical summary
+covering every relevant point from the transcript — don't just restate Gemini's
+summary, and don't repeat the same point twice. If Gemini's summary is missing
+something the transcript covers, fold it in; if Gemini's summary already says
+something correctly, don't say it again in different words.
+
+Return STRICT JSON only, no markdown:
 {
   "summary": "3-4 sentence clinical summary of ${patientName}'s main concerns and relevant findings, third person",
   "starters": ["3 to 4 specific discussion angles a coaching team should explore to build ${patientName}'s plan — phrased as case-discussion prompts, not questions to the patient"]
 }`,
             },
-            { role: 'user', content: `Transcript:\n\n${transcript}` },
+            { role: 'user', content: `Transcript:\n\n${transcript}${geminiSummaryBlock}` },
           ],
         });
         const raw = completion.choices[0]?.message?.content || '{}';
@@ -99,9 +187,9 @@ TASK: Read the consultation transcript. Return STRICT JSON only, no markdown:
         let starters = Array.isArray(parsed.starters)
           ? parsed.starters.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
           : [];
-        // If parsing failed entirely, fall back to plain text (still not raw JSON braces).
+        // If parsing failed entirely, say so — don't leak the mangled JSON as if it were the summary.
         if (!summary && !starters.length) {
-          summary = raw.replace(/[{}"]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600);
+          return Response.json({ error: 'The case summary could not be parsed. Tap retry to regenerate.' });
         }
         return Response.json({ summary, starters });
       } catch (err) { return friendlyError(err); }
@@ -111,16 +199,22 @@ TASK: Read the consultation transcript. Return STRICT JSON only, no markdown:
       try {
         // Keep only the last ~8 turns so the running context stays under budget.
         const trimmedMessages = messages.slice(-8);
+        const latestQuestion = [...trimmedMessages].reverse().find((m: any) => m.role === 'user')?.content || '';
+        const { kbContext, sources } = await retrieveKbContext(latestQuestion);
+        const kbBlock = kbContext
+          ? `\n\nRelevant excerpts from the clinical knowledge base (use only if actually relevant to the coach's question — don't force it in):\n\n${kbContext}`
+          : '';
+
         const completion = await groq.chat.completions.create({
           model: MODEL_CHAT,
           temperature: 0.6,
           max_tokens: 350, // keep replies short & conversational, not essays
           messages: [
-            { role: 'system', content: `${baseIdentity(patientName)}\n\nConsultation transcript (may be trimmed):\n\n${transcript}` },
+            { role: 'system', content: `${baseIdentity(patientName)}\n\nConsultation transcript (may be trimmed):\n\n${transcript}${geminiSummaryBlock}${kbBlock}` },
             ...trimmedMessages,
           ],
         });
-        return Response.json({ reply: completion.choices[0]?.message?.content || '' });
+        return Response.json({ reply: completion.choices[0]?.message?.content || '', sources });
       } catch (err) { return friendlyError(err); }
     }
 
