@@ -227,7 +227,12 @@ Return STRICT JSON only, no markdown:
     if (mode === 'chat') {
       try {
         // Keep only the last ~8 turns so the running context stays under budget.
-        const trimmedMessages = messages.slice(-8);
+        // Strip everything but role/content — the client attaches a "sources"
+        // field to assistant messages (for the "Grounded in:" UI), and Groq's
+        // API does strict schema validation that 400s on any unrecognized
+        // property, permanently breaking every request once one such message
+        // enters the conversation history.
+        const trimmedMessages = messages.slice(-8).map((m: any) => ({ role: m.role, content: m.content }));
         const latestQuestion = [...trimmedMessages].reverse().find((m: any) => m.role === 'user')?.content || '';
         // KB retrieval is a bonus, not a dependency — under DB load the unindexed
         // fallback path has been observed taking 3.5s-43s+, which must never be
