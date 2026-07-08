@@ -52,15 +52,17 @@ async function retrieveKbContext(queryText: string): Promise<{ kbContext: string
 
     if (!chunks.length) {
       // Without embeddings this is a blunt instrument, so favor precision over
-      // recall: AND together the 3 most specific (longest) keywords rather than
+      // recall: AND together the 2 most specific (longest) keywords rather than
       // OR-ing everything — an OR of generic words like "mechanism"/"therapy"
       // pulls in unrelated books (e.g. a habits book) as false "grounding".
+      // (Was AND-of-3, but requiring 3 specific words to co-occur in one ~350-char
+      // chunk missed too many real matches once queries combined more context.)
       const keywords = [...new Set(
         queryText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)
           .filter((w) => w.length > 4 && !STOP_WORDS.has(w))
       )]
         .sort((a, b) => b.length - a.length)
-        .slice(0, 3);
+        .slice(0, 2);
 
       if (keywords.length >= 2) {
         const tKw = Date.now();
@@ -233,7 +235,16 @@ Return STRICT JSON only, no markdown:
         // property, permanently breaking every request once one such message
         // enters the conversation history.
         const trimmedMessages = messages.slice(-8).map((m: any) => ({ role: m.role, content: m.content }));
-        const latestQuestion = [...trimmedMessages].reverse().find((m: any) => m.role === 'user')?.content || '';
+        // Short conversational replies ("yes", "she has dumbbells") carry almost
+        // no searchable clinical vocabulary on their own — fold in the prior
+        // assistant turn's content so the query still carries the topic being
+        // discussed, instead of silently finding nothing to ground on.
+        const lastUserIdx = trimmedMessages.map((m) => m.role).lastIndexOf('user');
+        const latestUserMsg = trimmedMessages[lastUserIdx]?.content || '';
+        const priorAssistantMsg = lastUserIdx > 0 && trimmedMessages[lastUserIdx - 1]?.role === 'assistant'
+          ? trimmedMessages[lastUserIdx - 1].content
+          : '';
+        const latestQuestion = `${priorAssistantMsg} ${latestUserMsg}`.trim();
         // KB retrieval is a bonus, not a dependency — under DB load the unindexed
         // fallback path has been observed taking 3.5s-43s+, which must never be
         // allowed to block the actual reply. Race it against a hard cutoff.

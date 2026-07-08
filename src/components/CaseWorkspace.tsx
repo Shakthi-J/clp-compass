@@ -207,10 +207,18 @@ export default function CaseWorkspace({
                   {m.content}
                 </div>
                 {m.role === 'assistant' && !!m.sources?.length && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', marginTop: 5, fontSize: 11, color: C.faint }}>
-                    <BookOpen size={11} />
-                    <span>Grounded in: {m.sources.map(s => s.title).join(', ')}</span>
-                  </div>
+                  <details className="source-popover" style={{ marginTop: 5 }}>
+                    <summary style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.greenDeep, fontWeight: 600, cursor: 'pointer', background: C.greenSoft, border: `1px solid ${C.greenBorder}`, borderRadius: 20, padding: '3px 10px' }}>
+                      <BookOpen size={11} /> {m.sources.length} source{m.sources.length > 1 ? 's' : ''}
+                    </summary>
+                    <ul style={{ margin: '6px 0 0', padding: '8px 12px', listStyle: 'none', background: C.card, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 12, color: C.ink, lineHeight: 1.6 }}>
+                      {m.sources.map((s, si) => (
+                        <li key={si} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                          <span style={{ color: C.faint }}>•</span> {s.title}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
               </div>
             </div>
@@ -251,7 +259,11 @@ export default function CaseWorkspace({
         </div>
       </div>
 
-      <style>{`@keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }`}</style>
+      <style>{`
+        @keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+        .source-popover summary { list-style: none; }
+        .source-popover summary::-webkit-details-marker { display: none; }
+      `}</style>
     </div>
   )
 }
