@@ -100,6 +100,22 @@ async function retrieveKbContext(queryText: string): Promise<{ kbContext: string
 const MODEL_FAST = 'openai/gpt-oss-20b';    // summaries / drafting — lighter load
 const MODEL_CHAT = 'openai/gpt-oss-20b';    // discussion — keep on 20b for free-tier headroom
 
+// Groq's free tier occasionally throws a transient error (brief 5xx/overload)
+// that clears up moments later — this was showing up as "could not respond",
+// with the coach having to manually resend the exact same message to get a
+// reply. Retry once with a short backoff before giving up.
+async function withRetry<T>(fn: () => Promise<T>, retries = 1, delayMs = 800): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries) throw err;
+      console.error(`Groq call failed (attempt ${attempt + 1}/${retries + 1}), retrying:`, err instanceof Error ? err.message : err);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 // Rough token budget for the transcript we send. ~1 token ≈ 4 chars.
 // Keep well under the 8k TPM limit once the prompt + reply are added.
 const MAX_TRANSCRIPT_CHARS = 16000; // ~4,000 tokens
@@ -158,7 +174,7 @@ export async function POST(req: Request) {
 
     if (mode === 'summary') {
       try {
-        const completion = await groq.chat.completions.create({
+        const completion = await withRetry(() => groq.chat.completions.create({
           model: MODEL_FAST,
           temperature: 0.4,
           max_tokens: 1024, // was 700 — too tight for summary + 3-4 starters, caused JSON truncation
@@ -184,7 +200,7 @@ Return STRICT JSON only, no markdown:
             },
             { role: 'user', content: `Transcript:\n\n${transcript}${geminiSummaryBlock}` },
           ],
-        });
+        }));
         const raw = completion.choices[0]?.message?.content || '{}';
         let parsed: { summary?: string; starters?: string[] } = {};
         // Robustly pull JSON out even if the model wraps it in prose or ``` fences.
@@ -224,7 +240,7 @@ Return STRICT JSON only, no markdown:
           ? `\n\nRelevant excerpts from the clinical knowledge base (use only if actually relevant to the coach's question — don't force it in):\n\n${kbContext}`
           : '';
 
-        const completion = await groq.chat.completions.create({
+        const completion = await withRetry(() => groq.chat.completions.create({
           model: MODEL_CHAT,
           temperature: 0.6,
           max_tokens: 350, // keep replies short & conversational, not essays
@@ -232,14 +248,14 @@ Return STRICT JSON only, no markdown:
             { role: 'system', content: `${baseIdentity(patientName)}\n\nConsultation transcript (may be trimmed):\n\n${transcript}${geminiSummaryBlock}${kbBlock}` },
             ...trimmedMessages,
           ],
-        });
+        }));
         return Response.json({ reply: completion.choices[0]?.message?.content || '', sources });
       } catch (err) { return friendlyError(err); }
     }
 
     if (mode === 'draft') {
       try {
-        const completion = await groq.chat.completions.create({
+        const completion = await withRetry(() => groq.chat.completions.create({
           model: MODEL_FAST,
           temperature: 0.3,
           max_tokens: 700,
@@ -252,7 +268,7 @@ TASK: Condense the discussion below into clear ROADMAP INSTRUCTIONS for ${patien
             },
             { role: 'user', content: `Discussion:\n\n${messages.slice(-10).map((m: any) => `${m.role === 'user' ? 'Coach' : 'Co-pilot'}: ${m.content}`).join('\n\n')}` },
           ],
-        });
+        }));
         return Response.json({ instructions: completion.choices[0]?.message?.content || '' });
       } catch (err) { return friendlyError(err); }
     }
