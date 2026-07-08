@@ -33,16 +33,20 @@ async function retrieveKbContext(queryText: string): Promise<{ kbContext: string
   const empty = { kbContext: '', sources: [] as KbSource[] };
   if (!queryText.trim()) return empty;
 
+  const t0 = Date.now();
   try {
     let chunks: { content: string; document_id: string }[] = [];
 
     const embedding = await embedText(queryText.slice(0, 512));
+    console.log(`[KB timing] embedText: ${Date.now() - t0}ms`);
     if (embedding && embedding.length === 384) {
+      const tRpc = Date.now();
       const { data } = await supabaseAdmin.rpc('match_kb_chunks', {
         query_embedding: embedding,
         match_threshold: 0.3,
         match_count: 6,
       });
+      console.log(`[KB timing] match_kb_chunks rpc: ${Date.now() - tRpc}ms`);
       if (data?.length) chunks = data;
     }
 
@@ -59,19 +63,23 @@ async function retrieveKbContext(queryText: string): Promise<{ kbContext: string
         .slice(0, 3);
 
       if (keywords.length >= 2) {
+        const tKw = Date.now();
         const { data, error } = await supabaseAdmin
           .from('kb_chunks').select('content, document_id')
           .textSearch('content', keywords.join(' '), { type: 'plain', config: 'english' })
           .limit(6);
+        console.log(`[KB timing] keyword textSearch: ${Date.now() - tKw}ms`);
         if (error) console.error('KB keyword search error:', error.message);
         if (data?.length) chunks = data;
       }
     }
 
-    if (!chunks.length) return empty;
+    if (!chunks.length) { console.log(`[KB timing] total (no chunks): ${Date.now() - t0}ms`); return empty; }
 
+    const tDocs = Date.now();
     const docIds = [...new Set(chunks.map((c) => c.document_id))];
     const { data: docs } = await supabaseAdmin.from('kb_documents').select('id, title, source_type').in('id', docIds);
+    console.log(`[KB timing] kb_documents lookup: ${Date.now() - tDocs}ms`);
     const docMap = Object.fromEntries((docs ?? []).map((d: { id: string; title: string; source_type: string }) => [d.id, d]));
 
     const kbContext = chunks.map((c, i) => `[KB ${i + 1}]: ${c.content.slice(0, 350)}`).join('\n\n');
@@ -80,9 +88,10 @@ async function retrieveKbContext(queryText: string): Promise<{ kbContext: string
       source_type: docMap[id]?.source_type ?? 'unknown',
     }));
 
+    console.log(`[KB timing] total: ${Date.now() - t0}ms`);
     return { kbContext, sources };
   } catch (err) {
-    console.error('KB retrieval error:', err instanceof Error ? err.message : err);
+    console.error('KB retrieval error:', err instanceof Error ? err.message : err, `(after ${Date.now() - t0}ms)`);
     return empty; // retrieval is a bonus, never block the chat reply on it
   }
 }
@@ -204,7 +213,13 @@ Return STRICT JSON only, no markdown:
         // Keep only the last ~8 turns so the running context stays under budget.
         const trimmedMessages = messages.slice(-8);
         const latestQuestion = [...trimmedMessages].reverse().find((m: any) => m.role === 'user')?.content || '';
-        const { kbContext, sources } = await retrieveKbContext(latestQuestion);
+        // KB retrieval is a bonus, not a dependency — under DB load the unindexed
+        // fallback path has been observed taking 3.5s-43s+, which must never be
+        // allowed to block the actual reply. Race it against a hard cutoff.
+        const kbTimeout = new Promise<{ kbContext: string; sources: KbSource[] }>((resolve) =>
+          setTimeout(() => resolve({ kbContext: '', sources: [] }), 5000)
+        );
+        const { kbContext, sources } = await Promise.race([retrieveKbContext(latestQuestion), kbTimeout]);
         const kbBlock = kbContext
           ? `\n\nRelevant excerpts from the clinical knowledge base (use only if actually relevant to the coach's question — don't force it in):\n\n${kbContext}`
           : '';
