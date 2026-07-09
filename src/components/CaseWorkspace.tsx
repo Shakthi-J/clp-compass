@@ -9,7 +9,15 @@ const C = {
 }
 type KbSource = { title: string; source_type: string }
 type Msg = { role: 'user' | 'assistant'; content: string; sources?: KbSource[]; generalAnswer?: boolean; kbMiss?: boolean }
-type ChecklistItem = { index: number; text: string; priority: number; status: 'pending' | 'discussed' | 'deferred' }
+// A step is a concrete, RAG-grounded action toward a milestone — validated
+// against this specific patient's known constraints (allergies, intolerances,
+// preferences) before being marked 'validated'. 'rejected' means the AI (or
+// coach) ruled it out as unsafe/inappropriate for this patient specifically.
+type Step = { index: number; text: string; status: 'pending' | 'validated' | 'rejected'; sources: KbSource[] }
+// A concern can produce more than one milestone (e.g. "insulin resistance"
+// might need both a fiber milestone and an exercise milestone).
+type Milestone = { index: number; text: string; steps: Step[] }
+type ChecklistItem = { index: number; text: string; priority: number; status: 'pending' | 'discussed' | 'deferred'; milestones: Milestone[] }
 
 export default function CaseWorkspace({
   sessionId, patientId, patientName = 'the patient', transcript = '', geminiSummary = '',
@@ -211,8 +219,9 @@ export default function CaseWorkspace({
           </div>
         </div>
 
-        {/* Discussion checklist — the AI's prioritized list of concerns to work through.
-            Stays visible for the whole discussion so progress is always clear. */}
+        {/* Discussion checklist — the AI's prioritized list of concerns to work through,
+            each expandable to show the milestones/steps built for it. Stays visible for
+            the whole discussion so progress is always clear. */}
         {checklist.length > 0 && (
           <div style={{ padding: '14px 18px', background: '#FCFBF7', borderBottom: `1px solid ${C.line}` }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.greenDeep, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
@@ -220,14 +229,47 @@ export default function CaseWorkspace({
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {checklist.map((c) => (
-                <div key={c.index} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, lineHeight: 1.4 }}>
-                  {c.status === 'discussed' ? <CheckCircle2 size={14} color={C.green} style={{ flexShrink: 0, marginTop: 1 }} />
-                    : c.status === 'deferred' ? <Clock size={14} color={C.amber} style={{ flexShrink: 0, marginTop: 1 }} />
-                    : <Circle size={14} color={C.faint} style={{ flexShrink: 0, marginTop: 1 }} />}
-                  <span style={{
-                    color: c.status === 'discussed' ? C.muted : c.status === 'deferred' ? '#9A6316' : C.ink,
-                    textDecoration: c.status === 'discussed' ? 'line-through' : 'none',
-                  }}>{c.text}</span>
+                <div key={c.index}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, lineHeight: 1.4 }}>
+                    {c.status === 'discussed' ? <CheckCircle2 size={14} color={C.green} style={{ flexShrink: 0, marginTop: 1 }} />
+                      : c.status === 'deferred' ? <Clock size={14} color={C.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+                      : <Circle size={14} color={C.faint} style={{ flexShrink: 0, marginTop: 1 }} />}
+                    <span style={{
+                      color: c.status === 'discussed' ? C.muted : c.status === 'deferred' ? '#9A6316' : C.ink,
+                      textDecoration: c.status === 'discussed' ? 'line-through' : 'none',
+                    }}>{c.text}</span>
+                  </div>
+                  {!!c.milestones?.length && (
+                    <div style={{ marginLeft: 22, marginTop: 5, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {c.milestones.map((m) => (
+                        <div key={m.index} style={{ borderLeft: `2px solid ${C.greenBorder}`, paddingLeft: 9 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: C.greenDeep }}>{m.text}</div>
+                          {!!m.steps?.length && (
+                            <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              {m.steps.map((s) => (
+                                <div key={s.index} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontSize: 11.5 }}>
+                                  {s.status === 'validated' ? <CheckCircle2 size={12} color={C.green} style={{ flexShrink: 0, marginTop: 1 }} />
+                                    : s.status === 'rejected' ? <AlertCircle size={12} color="#C0392B" style={{ flexShrink: 0, marginTop: 1 }} />
+                                    : <Circle size={12} color={C.faint} style={{ flexShrink: 0, marginTop: 1 }} />}
+                                  <div>
+                                    <span style={{
+                                      color: s.status === 'rejected' ? '#C0392B' : C.ink,
+                                      textDecoration: s.status === 'rejected' ? 'line-through' : 'none',
+                                    }}>{s.text}</span>
+                                    {!!s.sources?.length && (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, color: C.faint, fontSize: 10.5 }}>
+                                        <BookOpen size={10} /> {s.sources.map((src) => src.title).join(', ')}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
