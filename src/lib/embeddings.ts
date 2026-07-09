@@ -1,8 +1,14 @@
-// Runtime embeddings using HF Inference API
-// Same model as Python ingestion: all-MiniLM-L6-v2 (384 dim)
-
+// Runtime embeddings using HF Inference Providers (the "hf-inference" provider).
+// Same model as the bulk KB ingestion script: all-MiniLM-L6-v2 (384 dim)
+//
+// api-inference.huggingface.co (the old free "Inference API") is fully
+// decommissioned — the hostname doesn't even resolve anymore. Confirmed via
+// DNS lookup and by testing in both this dev environment and production;
+// every single "HF embedding error: fetch failed" all session was this,
+// not a network/firewall issue. router.huggingface.co is the current
+// endpoint for Inference Providers.
 const HF_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
-const HF_URL = `https://api-inference.huggingface.co/pipeline/feature-extraction/${HF_MODEL}`
+const HF_URL = `https://router.huggingface.co/hf-inference/models/${HF_MODEL}/pipeline/feature-extraction`
 
 export async function embedText(text: string): Promise<number[] | null> {
   const apiKey = process.env.HUGGINGFACE_API_KEY
