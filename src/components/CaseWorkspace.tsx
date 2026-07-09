@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
-import { Loader2, Sparkles, Send, ClipboardCheck, MessageSquare, AlertCircle, RotateCw, FileText, ChevronDown, ChevronUp, BookOpen } from 'lucide-react'
+import { Loader2, Sparkles, Send, ClipboardCheck, MessageSquare, AlertCircle, RotateCw, FileText, ChevronDown, ChevronUp, BookOpen, Circle, CheckCircle2, Clock } from 'lucide-react'
 
 const C = {
   green: '#538A22', greenDeep: '#2F5214', greenSoft: '#F2F9EC', greenBorder: '#C8E9A8',
@@ -9,15 +9,17 @@ const C = {
 }
 type KbSource = { title: string; source_type: string }
 type Msg = { role: 'user' | 'assistant'; content: string; sources?: KbSource[]; generalAnswer?: boolean; kbMiss?: boolean }
+type ChecklistItem = { index: number; text: string; priority: number; status: 'pending' | 'discussed' | 'deferred' }
 
 export default function CaseWorkspace({
   sessionId, patientId, patientName = 'the patient', transcript = '', geminiSummary = '',
 }: { sessionId: string; patientId?: string; patientName?: string; transcript?: string; geminiSummary?: string }) {
   const [summary, setSummary] = useState('')
-  const [starters, setStarters] = useState<string[]>([])
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([])
   const [summaryError, setSummaryError] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [showTranscript, setShowTranscript] = useState(false)
+  const [opening, setOpening] = useState(false)
 
   const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
@@ -26,6 +28,13 @@ export default function CaseWorkspace({
   const [drafting, setDrafting] = useState(false)
   const [saved, setSaved] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  function persistChecklist(list: ChecklistItem[]) {
+    fetch(`/api/sessions/${sessionId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ case_summary: { summary, checklist: list } }),
+    }).catch(() => {})
+  }
 
   async function generateSummary(name: string) {
     setSummaryLoading(true); setSummaryError('')
@@ -36,13 +45,13 @@ export default function CaseWorkspace({
       })
       const j = await r.json()
       if (j.error) { setSummaryError(j.error); return }
-      if (!j.summary && !(Array.isArray(j.starters) && j.starters.length)) {
+      if (!j.summary && !(Array.isArray(j.checklist) && j.checklist.length)) {
         setSummaryError('The summary came back empty — tap retry, or just start the discussion below.'); return
       }
-      setSummary(j.summary || ''); setStarters(Array.isArray(j.starters) ? j.starters : [])
+      setSummary(j.summary || ''); setChecklist(Array.isArray(j.checklist) ? j.checklist : [])
       fetch(`/api/sessions/${sessionId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ case_summary: { summary: j.summary, starters: j.starters } }),
+        body: JSON.stringify({ case_summary: { summary: j.summary, checklist: j.checklist } }),
       }).catch(() => {})
     } catch { setSummaryError('Could not reach the co-pilot. Check your connection and retry.') }
     finally { setSummaryLoading(false) }
@@ -71,8 +80,8 @@ export default function CaseWorkspace({
       if (!alive) return
       setInstructions(instr); setMessages(existing)
 
-      if (cached?.summary || (cached?.starters?.length)) {
-        setSummary(cached.summary || ''); setStarters(cached.starters || []); setSummaryLoading(false)
+      if (cached?.summary || (cached?.checklist?.length)) {
+        setSummary(cached.summary || ''); setChecklist(cached.checklist || []); setSummaryLoading(false)
       } else if (transcript) {
         generateSummary(name)
       } else {
@@ -85,6 +94,15 @@ export default function CaseWorkspace({
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) }, [messages, thinking])
 
+  // The AI leads: the moment a checklist is ready and nobody's said anything
+  // yet, it opens with the highest-priority item — no click needed from the coach.
+  useEffect(() => {
+    if (summaryLoading || opening || thinking) return
+    if (messages.length > 0 || checklist.length === 0) return
+    openDiscussion()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaryLoading, checklist, messages.length])
+
   async function persist(next: Msg[], instr?: string) {
     try {
       await fetch(`/api/sessions/${sessionId}`, {
@@ -93,6 +111,20 @@ export default function CaseWorkspace({
       })
     } catch {}
   }
+  async function openDiscussion() {
+    setOpening(true); setThinking(true)
+    try {
+      const r = await fetch('/api/qa-chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'chat', patientName, transcript, geminiSummary, checklist, messages: [] }),
+      })
+      const j = await r.json()
+      const opener: Msg[] = [{ role: 'assistant', content: j.reply || j.error || '…', sources: Array.isArray(j.sources) ? j.sources : [], generalAnswer: !!j.generalAnswer, kbMiss: !!j.kbMiss }]
+      setMessages(opener); persist(opener)
+      if (Array.isArray(j.checklist) && j.checklist.length) { setChecklist(j.checklist); persistChecklist(j.checklist) }
+    } catch {}
+    finally { setOpening(false); setThinking(false) }
+  }
   async function send(text: string) {
     const clean = text.trim(); if (!clean || thinking) return
     const next = [...messages, { role: 'user' as const, content: clean }]
@@ -100,11 +132,12 @@ export default function CaseWorkspace({
     try {
       const r = await fetch('/api/qa-chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'chat', patientName, transcript, geminiSummary, messages: next }),
+        body: JSON.stringify({ mode: 'chat', patientName, transcript, geminiSummary, checklist, messages: next }),
       })
       const j = await r.json()
       const withReply = [...next, { role: 'assistant' as const, content: j.reply || j.error || '…', sources: Array.isArray(j.sources) ? j.sources : [], generalAnswer: !!j.generalAnswer, kbMiss: !!j.kbMiss }]
       setMessages(withReply); persist(withReply)
+      if (Array.isArray(j.checklist) && j.checklist.length) { setChecklist(j.checklist); persistChecklist(j.checklist) }
     } catch { setMessages([...next, { role: 'assistant', content: 'Connection issue — try again.' }]) }
     finally { setThinking(false) }
   }
@@ -178,24 +211,37 @@ export default function CaseWorkspace({
           </div>
         </div>
 
-        {/* Starters — shown until the discussion begins */}
-        {messages.length === 0 && starters.length > 0 && (
-          <div style={{ padding: '16px 18px', background: C.greenSoft, borderBottom: `1px solid ${C.greenBorder}` }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.greenDeep, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>Start the discussion</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-              {starters.map((s, i) => (
-                <button key={i} onClick={() => send(s)}
-                  style={{ textAlign: 'left', background: C.card, border: `1px solid ${C.greenBorder}`, borderRadius: 10, padding: '10px 12px', fontSize: 13, color: C.greenDeep, fontWeight: 500, cursor: 'pointer', lineHeight: 1.4 }}>
-                  {s}
-                </button>
+        {/* Discussion checklist — the AI's prioritized list of concerns to work through.
+            Stays visible for the whole discussion so progress is always clear. */}
+        {checklist.length > 0 && (
+          <div style={{ padding: '14px 18px', background: '#FCFBF7', borderBottom: `1px solid ${C.line}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.greenDeep, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+              Discussion checklist
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {checklist.map((c) => (
+                <div key={c.index} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, lineHeight: 1.4 }}>
+                  {c.status === 'discussed' ? <CheckCircle2 size={14} color={C.green} style={{ flexShrink: 0, marginTop: 1 }} />
+                    : c.status === 'deferred' ? <Clock size={14} color={C.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+                    : <Circle size={14} color={C.faint} style={{ flexShrink: 0, marginTop: 1 }} />}
+                  <span style={{
+                    color: c.status === 'discussed' ? C.muted : c.status === 'deferred' ? '#9A6316' : C.ink,
+                    textDecoration: c.status === 'discussed' ? 'line-through' : 'none',
+                  }}>{c.text}</span>
+                </div>
               ))}
             </div>
           </div>
         )}
 
         <div ref={scrollRef} style={{ maxHeight: 440, overflowY: 'auto', padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {messages.length === 0 && starters.length === 0 && !summaryLoading && (
+          {messages.length === 0 && checklist.length === 0 && !summaryLoading && !opening && (
             <div style={{ fontSize: 12.5, color: C.faint, textAlign: 'center', padding: '8px 0' }}>Start the discussion below whenever you're ready.</div>
+          )}
+          {messages.length === 0 && opening && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: C.faint, fontSize: 12.5, justifyContent: 'center', padding: '8px 0' }}>
+              <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Your co-pilot is opening the discussion…
+            </div>
           )}
           {messages.map((m, i) => (
             <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
@@ -280,6 +326,13 @@ export default function CaseWorkspace({
 
 function pairFor(msgs: Msg[]) {
   const pairs: { question: string; answer: string; mode: string }[] = []
+  // The AI now opens the discussion itself, so msgs[0] can be an assistant
+  // message with no preceding user turn — store it with an empty question so
+  // the reload logic (which only pushes a user message when question is
+  // truthy) reconstructs it as a lone opening assistant message.
+  if (msgs[0]?.role === 'assistant') {
+    pairs.push({ question: '', answer: msgs[0].content, mode: 'discussion' })
+  }
   for (let i = 0; i < msgs.length; i++) {
     if (msgs[i].role === 'user') {
       const reply = msgs[i + 1]?.role === 'assistant' ? msgs[i + 1].content : ''
