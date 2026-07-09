@@ -127,10 +127,16 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 1, delayMs = 800): P
 
 // Rough token budget for the transcript we send. ~1 token ≈ 4 chars.
 // Keep well under the 8k TPM limit once the prompt + reply are added.
-const MAX_TRANSCRIPT_CHARS = 16000; // ~4,000 tokens
+// Groq reserves the FULL max_tokens upfront as "requested" tokens against the
+// TPM budget, whether or not the model uses it all — a real production 429
+// showed a single summary call requesting ~6,800 of the account's 8,000/min
+// limit (16000-char transcript + 6000-char gemini summary + max_tokens 2048),
+// leaving no headroom for anything else that minute. Was 16000/6000 chars;
+// cut roughly in half so one call can't consume the whole budget by itself.
+const MAX_TRANSCRIPT_CHARS = 8000; // ~2,000 tokens
 // Gemini's own meeting-summary doc is a secondary reference, not the ground
 // truth — give it a smaller budget so it can't crowd out the real transcript.
-const MAX_GEMINI_SUMMARY_CHARS = 6000; // ~1,500 tokens
+const MAX_GEMINI_SUMMARY_CHARS = 3000; // ~750 tokens
 
 // Trim text to a safe size. Keeps the start (where concerns/history are
 // stated) and the end (where plan/next-steps usually land), dropping the middle.
@@ -186,7 +192,17 @@ export async function POST(req: Request) {
         const summaryRequest = {
           model: MODEL_FAST,
           temperature: 0.4,
-          max_tokens: 1024, // was 700 — too tight for summary + 3-4 starters, caused JSON truncation
+          max_tokens: 1400, // was 1024 (then 2048, which blew the TPM budget) —
+          // Groq's json_object mode hard-fails (400 json_validate_failed) if
+          // max_tokens runs out before valid JSON closes, unlike a normal
+          // completion which just returns truncated text. But Groq reserves the
+          // FULL max_tokens as "requested" tokens against the per-minute limit,
+          // so this can't just be raised freely — reasoning_effort:'low' below
+          // does more of the real work here by keeping the model from burning
+          // tokens on internal reasoning before it starts writing the JSON.
+          reasoning_effort: 'low' as const, // this is a well-defined extraction task,
+          // not conditional-logic-following (unlike chat mode) — low reasoning effort
+          // here reduces wasted internal-reasoning tokens without hurting output quality.
           response_format: { type: 'json_object' as const }, // forces valid, closed JSON instead of prose-wrapped output
           messages: [
             {
@@ -204,7 +220,7 @@ something correctly, don't say it again in different words.
 Return STRICT JSON only, no markdown:
 {
   "summary": "3-4 sentence clinical summary of ${patientName}'s main concerns and relevant findings, third person",
-  "starters": ["3 to 4 specific discussion angles a coaching team should explore to build ${patientName}'s plan — phrased as case-discussion prompts, not questions to the patient"]
+  "checklist": ["4 to 6 of ${patientName}'s concerns from the transcript, ordered by CLINICAL URGENCY/SEVERITY — most pressing first (e.g. an acute or worsening symptom before a general lifestyle habit). Each one phrased as a specific coaching discussion point, not a question to the patient."]
 }`,
             },
             { role: 'user' as const, content: `Transcript:\n\n${transcript}${geminiSummaryBlock}` },
@@ -221,7 +237,7 @@ Return STRICT JSON only, no markdown:
           if (!raw.trim()) console.log(`[qa-chat debug] summary empty content (attempt ${attempt + 1}/2), finish_reason:`, completion.choices[0]?.finish_reason);
         }
         raw = raw || '{}';
-        let parsed: { summary?: string; starters?: string[] } = {};
+        let parsed: { summary?: string; checklist?: string[] } = {};
         // Robustly pull JSON out even if the model wraps it in prose or ``` fences.
         try {
           const clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -232,19 +248,26 @@ Return STRICT JSON only, no markdown:
         }
         // Guarantee clean shapes — never return raw JSON as the summary text.
         let summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
-        let starters = Array.isArray(parsed.starters)
-          ? parsed.starters.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
+        const checklistItems = Array.isArray(parsed.checklist)
+          ? parsed.checklist.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
           : [];
+        // Priority order is the order the model returned them in — assign stable
+        // indices now so status updates during the discussion can reference them.
+        const checklist = checklistItems.map((text, index) => ({ index, text, priority: index + 1, status: 'pending' as const }));
         // If parsing failed entirely, say so — don't leak the mangled JSON as if it were the summary.
-        if (!summary && !starters.length) {
+        if (!summary && !checklist.length) {
           return Response.json({ error: 'The case summary could not be parsed. Tap retry to regenerate.' });
         }
-        return Response.json({ summary, starters });
+        return Response.json({ summary, checklist });
       } catch (err) { return friendlyError(err); }
     }
 
     if (mode === 'chat') {
       try {
+        type ChecklistItem = { index: number; text: string; priority: number; status: 'pending' | 'discussed' | 'deferred' };
+        const checklist: ChecklistItem[] = Array.isArray(body.checklist) ? body.checklist : [];
+        const isOpening = messages.length === 0;
+
         // Keep only the last ~8 turns so the running context stays under budget.
         // Strip everything but role/content — the client attaches a "sources"
         // field to assistant messages (for the "Grounded in:" UI), and Groq's
@@ -255,13 +278,18 @@ Return STRICT JSON only, no markdown:
         // Short conversational replies ("yes", "she has dumbbells") carry almost
         // no searchable clinical vocabulary on their own — fold in the prior
         // assistant turn's content so the query still carries the topic being
-        // discussed, instead of silently finding nothing to ground on.
+        // discussed, instead of silently finding nothing to ground on. On the
+        // opening turn there's no conversation yet, so ground on the top
+        // pending checklist item instead — that's what the AI is about to ask.
         const lastUserIdx = trimmedMessages.map((m: any) => m.role).lastIndexOf('user');
         const latestUserMsg = trimmedMessages[lastUserIdx]?.content || '';
         const priorAssistantMsg = lastUserIdx > 0 && trimmedMessages[lastUserIdx - 1]?.role === 'assistant'
           ? trimmedMessages[lastUserIdx - 1].content
           : '';
-        const latestQuestion = `${priorAssistantMsg} ${latestUserMsg}`.trim();
+        const topPendingItem = checklist.find((c) => c.status === 'pending');
+        const latestQuestion = isOpening
+          ? (topPendingItem?.text || '')
+          : `${priorAssistantMsg} ${latestUserMsg}`.trim();
         // KB retrieval is a bonus, not a dependency — under DB load the unindexed
         // fallback path has been observed taking 3.5s-43s+, which must never be
         // allowed to block the actual reply. Race it against a hard cutoff.
@@ -290,6 +318,24 @@ Return STRICT JSON only, no markdown:
           ? `\n\nGROUNDING RULE: First check whether the knowledge base excerpts above actually address the coach's specific question — the search that found them is keyword-based and imperfect, so they may be irrelevant. If they DO address it, base your reply strictly on them, don't introduce clinical claims they don't support. If they DON'T (wrong topic entirely) and you are not giving a general answer per the rule below, your reply must start with the literal token "[NO_MATCH]" as the very first characters. Either way, if treating this as a miss: ${missInstructions}`
           : `\n\nGROUNDING RULE: No knowledge base material was found for this question. If it's a genuine factual/clinical question: ${missInstructions}`;
 
+        // Checklist-driven leading: you (the senior coach) drive this discussion
+        // through ${patientName}'s concerns in priority order, one at a time —
+        // the junior coach responds, they don't pick the topics.
+        let checklistRule = '';
+        if (checklist.length) {
+          const stateLines = checklist.map((c) => `${c.index}. [${c.status}] ${c.text}`).join('\n');
+          const pendingCount = checklist.filter((c) => c.status === 'pending').length;
+          const deferredCount = checklist.filter((c) => c.status === 'deferred').length;
+          checklistRule = `\n\nCHECKLIST — you are leading this discussion through these concerns, in priority order (most clinically urgent first):
+${stateLines}
+
+HOW TO LEAD:
+- Work through "pending" items in the order listed, one at a time. Ask about ONE item, then have a real back-and-forth about it — don't rush to the next item while the coach is still engaging with the current one.
+- HARD RULE, no exceptions: the moment your reply's main topic shifts away from the item you were just discussing — to a new item, or circling back to a deferred one — that reply MUST begin with \`[CHECKLIST_UPDATE:{"index":N,"status":"discussed"}]\` or \`[CHECKLIST_UPDATE:{"index":N,"status":"deferred"}]\`, where N is the item you're LEAVING (not the one you're moving to). This is mechanical, not optional: if you're about to talk about a different item than last turn, you already forgot the marker — go back and add it. The app has no other way to know an item is resolved. If you're continuing the SAME item as last turn, don't use any marker.
+- ${pendingCount > 0 ? `There ${pendingCount === 1 ? 'is' : 'are'} ${pendingCount} pending item(s) left.` : deferredCount > 0 ? `No pending items left, but ${deferredCount} were deferred — circle back to the highest-priority deferred one now ("Let's come back to X you weren't sure about earlier...") using the same marker mechanism when it's resolved.` : 'Every item has been covered. Congratulate the coach briefly and ask if they want to draft roadmap instructions from this discussion now.'}
+- Never mention "checklist" or "index numbers" to the coach — just lead the conversation naturally, like a senior coach who has a mental list of what to cover.`;
+        }
+
         const chatRequest = {
           model: MODEL_CHAT,
           temperature: 0.3, // was 0.6 — this now follows conditional grounding/marker
@@ -300,8 +346,12 @@ Return STRICT JSON only, no markdown:
           // reasoning before producing visible output, hitting finish_reason:'length'
           // with empty content.
           messages: [
-            { role: 'system' as const, content: `${baseIdentity(patientName)}\n\nConsultation transcript (may be trimmed):\n\n${transcript}${geminiSummaryBlock}${kbBlock}${groundingRule}` },
+            { role: 'system' as const, content: `${baseIdentity(patientName)}\n\nConsultation transcript (may be trimmed):\n\n${transcript}${geminiSummaryBlock}${kbBlock}${groundingRule}${checklistRule}` },
             ...trimmedMessages,
+            // No conversation yet — this nudges the model to open with the top
+            // checklist item without ever appearing in the visible chat (only
+            // the assistant's reply gets shown/persisted, never this message).
+            ...(isOpening ? [{ role: 'user' as const, content: '(Begin the discussion by raising the highest-priority item on the checklist.)' }] : []),
           ],
         };
 
@@ -330,8 +380,23 @@ Return STRICT JSON only, no markdown:
           reply = reply.replace(/^\[NO_MATCH\]\s*/, '');
           effectiveSources = [];
         }
+
+        // Parse and apply a checklist status update, if the model emitted one.
+        let updatedChecklist = checklist;
+        const checklistMatch = reply.match(/^\[CHECKLIST_UPDATE:(\{[^}]*\})\]\s*/);
+        if (checklistMatch) {
+          reply = reply.replace(checklistMatch[0], '');
+          try {
+            const update = JSON.parse(checklistMatch[1]) as { index: number; status: 'discussed' | 'deferred' };
+            updatedChecklist = checklist.map((c) => (c.index === update.index ? { ...c, status: update.status } : c));
+          } catch {
+            // Malformed marker — ignore it and leave checklist state unchanged
+            // rather than failing the whole reply over a formatting slip.
+          }
+        }
+
         const kbMiss = !effectiveSources.length && !generalAnswer;
-        return Response.json({ reply, sources: effectiveSources, generalAnswer, kbMiss });
+        return Response.json({ reply, sources: effectiveSources, generalAnswer, kbMiss, checklist: updatedChecklist });
       } catch (err) { return friendlyError(err); }
     }
 
