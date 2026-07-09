@@ -2,37 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 import { supabaseAdmin } from '@/lib/supabase'
-import { GoogleGenAI } from '@google/genai'
+import Groq from 'groq-sdk'
 
-// NOTE: "gemini_doc" here refers to Google Meet's auto-generated transcript doc
-// (the meeting notetaker), unrelated to the Gemini LLM API used below to parse it.
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-
-const extractionSchema = {
-  type: 'object',
-  properties: {
-    patient: {
-      type: 'object',
-      properties: {
-        gender: { type: 'string', nullable: true, description: 'male, female, other, or null' },
-        primary_concern: { type: 'string', nullable: true, description: "Most specific 1-sentence summary of the patient's main health concern with all relevant conditions mentioned" },
-        medical_history: { type: 'string', nullable: true, description: 'All past diagnoses, surgeries, medications, family history as a paragraph' },
-      },
-    },
-    qa_pairs: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          question: { type: 'string', description: 'Clinical question that this answer addresses' },
-          answer: { type: 'string', description: 'Specific answer extracted from the consultation notes' },
-        },
-        required: ['question', 'answer'],
-      },
-    },
-  },
-  required: ['patient', 'qa_pairs'],
-}
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
 export async function POST(req: NextRequest) {
   try {
@@ -41,19 +13,42 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing gemini_doc or patient_id' }, { status: 400 })
     }
 
-    // ── Extract structured data from the meeting transcript ───
-    const response = await ai.models.generateContent({
-      // Not flash-lite: measured directly hitting repeated 503 "high demand" errors
-      // and 8-17s latency on its free tier right now, while standard flash was
-      // consistently 0.6-1.2s with zero errors across the same test run.
-      model: 'gemini-2.5-flash',
-      contents: `Extract all clinical information from this consultation note:
+    // ── Extract structured data from Gemini doc ───────────────
+    const extractRes = await groq.chat.completions.create({
+      // 120b, not 20b: this runs automatically right after session creation, back-to-
+      // back with qa-chat's own summary generation (also on 20b). Sharing one model
+      // means sharing one free-tier TPM budget between two calls fired seconds apart —
+      // using the other model gives this its own separate rate-limit pool.
+      model: 'openai/gpt-oss-120b',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a clinical data extractor. Extract structured information from a medical consultation note. Return ONLY valid JSON, no markdown, no explanation.'
+        },
+        {
+          role: 'user',
+          content: `Extract all clinical information from this consultation note and return as JSON:
 
 ${gemini_doc.slice(0, 4000)}
 
+Return this exact JSON structure (use null for missing fields):
+{
+  "patient": {
+    "gender": "male or female or other or null",
+    "primary_concern": "Most specific 1-sentence summary of their main health concern with all relevant conditions mentioned",
+    "medical_history": "All past diagnoses, surgeries, medications, family history as a paragraph"
+  },
+  "qa_pairs": [
+    {
+      "question": "Clinical question that this answer addresses",
+      "answer": "Specific answer extracted from the consultation notes"
+    }
+  ]
+}
+
 For qa_pairs, extract ALL clinical details as question-answer pairs covering:
 - Current symptoms and complaints
-- Diet and eating patterns
+- Diet and eating patterns  
 - Sleep quality and schedule
 - Physical activity level
 - Stress and mental health
@@ -63,20 +58,14 @@ For qa_pairs, extract ALL clinical details as question-answer pairs covering:
 - Lab results or test findings
 - Lifestyle and work context
 
-Extract as many qa_pairs as the document supports. Be specific and clinical in both questions and answers.`,
-      config: {
-        systemInstruction: 'You are a clinical data extractor. Extract structured information from a medical consultation note.',
-        responseMimeType: 'application/json',
-        responseSchema: extractionSchema,
-        temperature: 0.1,
-        maxOutputTokens: 2000,
-        thinkingConfig: { thinkingBudget: 0 }, // this is a well-defined extraction
-        // task, not reasoning — without this, Flash-Lite's default "thinking" adds
-        // 13-17s of latency to a simple extraction (measured directly).
-      },
+Extract as many qa_pairs as the document supports. Be specific and clinical in both questions and answers.`
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 2000,
     })
 
-    const raw = response.text ?? ''
+    const raw = extractRes.choices[0]?.message?.content ?? ''
     console.log('Gemini parse raw:', raw.slice(0, 300))
 
     let extracted: {
@@ -85,7 +74,10 @@ Extract as many qa_pairs as the document supports. Be specific and clinical in b
     }
 
     try {
-      extracted = JSON.parse(raw)
+      const clean = raw.replace(/```json|```/g, '').trim()
+      const match = clean.match(/\{[\s\S]*\}/)
+      if (!match) throw new Error('No JSON found')
+      extracted = JSON.parse(match[0])
     } catch (e) {
       return NextResponse.json({ error: `Parse failed: ${e instanceof Error ? e.message : e}. Raw: ${raw.slice(0, 200)}` }, { status: 500 })
     }
