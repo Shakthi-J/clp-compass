@@ -291,9 +291,15 @@ Return STRICT JSON only, no markdown:
           ? trimmedMessages[lastUserIdx - 1].content
           : '';
         const topPendingItem = checklist.find((c) => c.status === 'pending');
+        // Only blend in the prior assistant turn when the coach's own message is
+        // genuinely thin (a handful of words) — a real, self-contained question
+        // should be searched on its own content. Blending unconditionally meant
+        // the exact same detailed question could retrieve totally different (or
+        // zero) results depending on whatever unrelated topic preceded it.
+        const isThinMessage = latestUserMsg.trim().split(/\s+/).filter(Boolean).length <= 6;
         const latestQuestion = isOpening
           ? (topPendingItem?.text || '')
-          : `${priorAssistantMsg} ${latestUserMsg}`.trim();
+          : (isThinMessage ? `${priorAssistantMsg} ${latestUserMsg}`.trim() : latestUserMsg);
         // KB retrieval is a bonus, not a dependency — under DB load the unindexed
         // fallback path has been observed taking 3.5s-43s+, which must never be
         // allowed to block the actual reply. Race it against a hard cutoff.
