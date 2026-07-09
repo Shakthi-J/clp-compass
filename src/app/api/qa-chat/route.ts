@@ -44,7 +44,11 @@ async function retrieveKbContext(queryText: string): Promise<{ kbContext: string
       const { data } = await supabaseAdmin.rpc('match_kb_chunks', {
         query_embedding: embedding,
         match_threshold: 0.3,
-        match_count: 6,
+        match_count: 10, // was 6 — bumped now that real vector search works and
+        // the KB is 11K+ docs; kept as an explicit cap (not unlimited) since
+        // Groq's free tier shares one 8,000 TPM / 200,000 TPD budget across
+        // every call, and an uncapped KB context injected into one message
+        // could exhaust it by itself (already happened once this session).
       });
       console.log(`[KB timing] match_kb_chunks rpc: ${Date.now() - tRpc}ms`);
       if (data?.length) chunks = data;
@@ -69,7 +73,7 @@ async function retrieveKbContext(queryText: string): Promise<{ kbContext: string
         const { data, error } = await supabaseAdmin
           .from('kb_chunks').select('content, document_id')
           .textSearch('content', keywords.join(' '), { type: 'plain', config: 'english' })
-          .limit(6);
+          .limit(10); // matches the vector-search cap above, now that real search works
         console.log(`[KB timing] keyword textSearch: ${Date.now() - tKw}ms`);
         if (error) console.error('KB keyword search error:', error.message);
         if (data?.length) chunks = data;
